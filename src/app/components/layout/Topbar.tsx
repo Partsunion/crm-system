@@ -23,6 +23,7 @@ import type { User } from '../../utils/storage';
 import { cn } from '../ui/utils';
 import { WORKSPACE_HEADER, WORKSPACE_SEARCH, WORKSPACE_ACTION, WORKSPACE_AVATAR } from './workspaceShell';
 import { canUseWorkspaceSwitch } from '../../utils/workspaceAccess';
+import { PhoneStatusButton } from '../../phone/PhoneUI';
 
 /** Zurückhaltende Pille in der Kopfzeile — dieselbe Form wie im Admin. */
 
@@ -100,6 +101,7 @@ export function Topbar({ title, user, onOpenMobileSidebar, onOpenPalette, onRefr
       </button>
 
       {/* Aktualisieren — holt geteilte Einstellungen (Status/Pipeline) + Daten neu */}
+      <PhoneStatusButton />
       {onRefresh && (
         <button
           type="button"

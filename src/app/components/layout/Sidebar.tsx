@@ -55,11 +55,11 @@ interface NavItem {
 type NavTone = 'accent' | 'info' | 'success' | 'warning' | 'danger';
 
 const NAV_TONES: Record<NavTone, string> = {
-  accent: 'bg-accent-500/[0.10] text-accent-500',
-  info: 'bg-status-info/10 text-status-info',
-  success: 'bg-status-success/10 text-status-success',
-  warning: 'bg-status-warning/10 text-status-warning',
-  danger: 'bg-status-danger/10 text-status-danger',
+  accent: 'bg-white/[0.045] text-blue-300',
+  info: 'bg-white/[0.045] text-sky-300',
+  success: 'bg-white/[0.045] text-emerald-300',
+  warning: 'bg-white/[0.045] text-amber-300',
+  danger: 'bg-white/[0.045] text-rose-300',
 };
 
 interface NavSection {
@@ -209,11 +209,10 @@ export function Sidebar({ activeView, onNavigate, mobileOpen, onMobileOpenChange
       >
         <aside
           className={cn(
-            'sticky top-0 flex h-screen flex-col border-r border-border-subtle',
+            'crm-sidebar sticky top-0 flex h-screen flex-col border-r',
             // Redesign: durchscheinende Verlaufsfläche statt deckendem Grau.
             // Die Leiste sitzt damit auf dem Lichtverlauf der Seite, statt ihn
             // zu verdecken.
-            'bg-surface',
             'transition-[width] duration-200 ease-out',
             collapsed ? 'w-16' : 'w-64',
           )}
@@ -231,7 +230,7 @@ export function Sidebar({ activeView, onNavigate, mobileOpen, onMobileOpenChange
         </aside>
         {collapsed && hovering && (
           <aside
-            className="absolute inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-border-subtle bg-canvas shadow-2xl"
+            className="crm-sidebar absolute inset-y-0 left-0 z-40 flex w-64 flex-col border-r shadow-2xl"
             aria-label="Hauptnavigation (ausgeklappt)"
           >
             <Brand collapsed={false} />
@@ -252,7 +251,7 @@ export function Sidebar({ activeView, onNavigate, mobileOpen, onMobileOpenChange
 
       {/* Mobile Drawer */}
       <Sheet open={mobileOpen} onOpenChange={onMobileOpenChange}>
-        <SheetContent side="left" className="w-64 gap-0 border-border-subtle bg-surface p-0" onCloseAutoFocus={event => { event.preventDefault(); document.querySelector<HTMLButtonElement>('[aria-label="Navigation öffnen"]')?.focus(); }}>
+        <SheetContent side="left" className="crm-sidebar w-64 gap-0 border-r p-0" onCloseAutoFocus={event => { event.preventDefault(); document.querySelector<HTMLButtonElement>('[aria-label="Navigation öffnen"]')?.focus(); }}>
           <SheetTitle className="sr-only">CRM-Navigation</SheetTitle>
           <SheetDescription className="sr-only">Arbeitsbereich auswählen</SheetDescription>
             <Brand collapsed={false} />
@@ -326,11 +325,11 @@ function Nav({
   collapsed: boolean;
 }) {
   return (
-    <nav className="flex-1 overflow-y-auto px-0 pb-3 pt-5" aria-label="Navigation">
+    <nav className="flex-1 overflow-y-auto px-0 pb-3 pt-3" aria-label="Navigation">
       {NAV_SECTIONS.map((section) => (
-        <div key={section.id} className="mb-4">
+        <div key={section.id} className="mb-3">
           {!collapsed && (
-            <div className="mb-2 px-[22px] text-xs font-medium text-text-muted">
+            <div className="mb-1 px-[22px] text-[9px] font-bold uppercase tracking-[0.16em] text-text-muted">
               {section.label}
             </div>
           )}
@@ -366,7 +365,7 @@ function Nav({
                         // durchscheinend, und im Hellmodus wäre weisse Schrift
                         // darauf unsichtbar. Im Admin am Bild nachgemessen.
                         ? WORKSPACE_NAV_ACTIVE
-                        : 'text-text-tertiary hover:bg-overlay/[0.05] hover:text-text-primary',
+                        : 'text-text-tertiary hover:bg-white/[0.055] hover:text-text-primary',
                     )}
                   >
                     {isActive && (
@@ -377,8 +376,8 @@ function Nav({
                     )}
                     <span
                       className={cn(
-                        'flex size-7 shrink-0 items-center justify-center rounded-lg transition-[background-color,color,transform] group-hover:scale-105',
-                        isActive ? 'bg-accent-600 text-white shadow-sm' : NAV_TONES[item.tone],
+                        'flex size-7 shrink-0 items-center justify-center rounded-md transition-[background-color,color] duration-150',
+                        isActive ? 'bg-white/[0.10] text-white' : NAV_TONES[item.tone],
                       )}
                     >
                       <Icon size={15} aria-hidden />

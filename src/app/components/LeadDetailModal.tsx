@@ -4,6 +4,8 @@ import { LoadError } from './LoadError';
 import { leadCategory } from '../utils/stages';
 import { safeWebsiteUrl } from '../utils/safeUrl';
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { CallButton, CallHistory, ActiveCallNote } from '../phone/PhoneUI';
+import { usePhone } from '../phone/context';
 import {
   Mail, Phone, User, Calendar, Edit, Trash2, Globe, MapPin, Tag as TagIcon,
   MessageSquare, PhoneCall, Video, FileText, CheckCircle, Clock, Rocket,
@@ -191,6 +193,8 @@ function initials(name: string): string {
 
 export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged, variant = 'modal' }: LeadDetailModalProps) {
   const currentUser = getCurrentUser();
+  const phone = usePhone();
+  const hasCallNote = phone?.opened && phone.call?.leadId === lead.id && phone.call?.userId === currentUser?.id;
   const currentName = currentUser?.username || currentUser?.name || '';
   const isAdmin = ['admin', 'Admin', 'superadmin'].includes(String(currentUser?.role || ''));
 
@@ -238,6 +242,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
   }, [lead.id]);
 
   useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => { const refresh = () => void reload(); window.addEventListener('crm:call-updated', refresh); return () => window.removeEventListener('crm:call-updated', refresh); }, [reload]);
 
   const reloadAppts = useCallback(async () => {
     setAppointmentError(false);
@@ -417,9 +422,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
           {(lead.phone || lead.email) && (
             <div className="flex gap-2">
               {lead.phone && (
-                <a href={`tel:${lead.phone}`} className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-accent-500 px-3 text-sm font-medium text-white transition-colors hover:bg-accent-600">
-                  <Phone className="size-4" />Anrufen
-                </a>
+                <CallButton lead={lead} />
               )}
               {lead.email && (
                 <a href={`mailto:${lead.email}`} className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-elevated px-3 text-sm font-medium text-text-secondary ring-1 ring-inset ring-border-subtle transition-colors hover:text-text-primary">
@@ -434,7 +437,8 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
         {/* ── Protokoll (Hauptbereich) — im Panel UNTER der Info-Karte ───── */}
         <div hidden={detailTab !== 'activity'} className="space-y-5">
           {/* Composer */}
-          <div className="rounded-md border border-border-subtle bg-surface p-4"><h3 className="mb-3 text-sm font-semibold">Aktivität erfassen</h3>
+          {hasCallNote && <ActiveCallNote />}
+          <div hidden={Boolean(hasCallNote)} className="rounded-md border border-border-subtle bg-surface p-4"><h3 className="mb-3 text-sm font-semibold">Aktivität erfassen</h3>
             <div className="mb-3 flex flex-wrap gap-1.5">
               {LOG_TYPES.map((t) => (
                 <button
@@ -509,6 +513,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
                 <Loader2 className="size-4 animate-spin" />Protokoll wird geladen…
               </div>
             )}
+            <CallHistory key={lead.id} leadId={lead.id} />
             {!loading && activities.map((a) => {
               const meta = ACTIVITY_META[a.type] || ACTIVITY_META.note;
               const isEditing = editingId === a.id;

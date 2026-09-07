@@ -36,6 +36,7 @@
  *    wie viele Leads es trifft.
  */
 import { useState } from 'react';
+import { PhoneSettingsCard } from '../phone/PhoneUI';
 import { Plus, Trash2, Save, Tag, Package, Briefcase, ListChecks, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { getSettings, getLeads, type Settings as SettingsType } from '../utils/storage';
@@ -115,6 +116,7 @@ export function Settings() {
         }
       />
 
+      <PhoneSettingsCard />
       <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
         <ListEditor
           icon={<ListChecks className="size-4" />}

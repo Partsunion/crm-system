@@ -11,6 +11,7 @@ import { mayLeaveWorkspace } from './utils/useWorkspaceGuard';
 import { toast } from 'sonner';
 import { vergessen } from './utils/zwischenspeicher';
 import { ansichtenVorwaermen } from './vorwaermen';
+import { PhoneProvider } from './phone/PhoneProvider';
 
 /**
  * Die Befehlspalette oeffnet erst auf ⌘K. Sie eager zu laden hiess: die
@@ -167,6 +168,7 @@ export default function App() {
   };
 
   return (
+    <PhoneProvider user={currentUser} onOpenLead={openLead}>
     <div className={WORKSPACE_FRAME} data-workspace="crm">
       <a href="#crm-main-content" className="sr-only rounded-md bg-accent-600 px-3 py-2 text-sm text-white focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100]">Zum Hauptinhalt springen</a>
       <Sidebar
@@ -187,6 +189,7 @@ export default function App() {
           onNewLead={activeView === 'dashboard' ? () => triggerLeadAction('new') : undefined}
           onChangePassword={() => setActiveView('security')}
           onLogout={async () => {
+            if (!window.dispatchEvent(new Event('crm:logout-check', { cancelable: true }))) return;
             if (!mayLeaveWorkspace()) return;
             setLoggedIn(false);
             try { await logout(); } catch (e) { toast.error(e instanceof Error ? e.message : 'Abmelden fehlgeschlagen.'); }
@@ -241,5 +244,6 @@ export default function App() {
       />
       </Suspense>
     </div>
+    </PhoneProvider>
   );
 }

@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlarmClock,
   ArrowRight,
   CalendarDays,
   CheckCircle2,
-  CircleAlert,
   Phone,
   RefreshCw,
-  UserRoundX,
   Users,
 } from 'lucide-react';
 import { getLeads, getAppointments, getCurrentUser, getStatusOptions, type Lead, type Appointment } from '../utils/storage';
@@ -15,7 +13,8 @@ import { leadCategory } from '../utils/stages';
 import { LoadError } from './LoadError';
 import { qualityOf, localDayKey, timestamp } from '../utils/leadQuality';
 import { Card, PageHeader, StatusBadge, Button, EmptyState, SEITEN_RAND, statusColor } from './ui-kit';
-import { WORKSPACE_CARD_INNER, WORKSPACE_METRIC, WORKSPACE_METRIC_VALUE } from './dichte';
+import { WORKSPACE_CARD_INNER } from './dichte';
+import { RankingTable } from '../ranking/RankingTable';
 
 export function Dashboard({ onOpenKalender, onOpenLead, onOpenLeads }: { onOpenKalender?: () => void; onOpenLead?: (id: string) => void; onOpenLeads?: () => void } = {}) {
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -23,6 +22,7 @@ export function Dashboard({ onOpenKalender, onOpenLead, onOpenLeads }: { onOpenK
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState(false);
   const [scope, setScope] = useState<'mine' | 'team'>('mine');
+  const [rankingRevision, setRankingRevision] = useState(0);
   const today = localDayKey(new Date());
   const user = getCurrentUser();
 
@@ -69,16 +69,16 @@ export function Dashboard({ onOpenKalender, onOpenLead, onOpenLeads }: { onOpenK
     .sort((a, b) => a.start_at.localeCompare(b.start_at)), [appointments, scope, user?.id]);
   const stages = getStatusOptions();
   const metrics = [
-    { label: 'Offene Leads', value: working.length, detail: scope === 'mine' ? 'in deiner Verantwortung' : 'im gesamten Team', icon: Users, color: 'var(--accent-500)', iconClass: 'bg-accent-500/[0.12] text-accent-500' },
-    { label: 'Wiedervorlagen fällig', value: due.length, detail: 'heute und überfällig', icon: AlarmClock, color: 'var(--warning)', iconClass: 'bg-status-warning/10 text-status-warning' },
-    { label: 'Ohne nächsten Schritt', value: missingNext.length, detail: 'benötigen eine Aktion', icon: CircleAlert, color: 'var(--danger)', iconClass: 'bg-status-danger/10 text-status-danger' },
-    { label: 'Noch nicht zugewiesen', value: unassignedCount, detail: 'im offenen Bestand', icon: UserRoundX, color: 'var(--info)', iconClass: 'bg-status-info/10 text-status-info' },
+    { label: 'Offene Leads', value: working.length, detail: scope === 'mine' ? 'in deiner Verantwortung' : 'im gesamten Team' },
+    { label: 'Wiedervorlagen fällig', value: due.length, detail: 'heute und überfällig' },
+    { label: 'Ohne nächsten Schritt', value: missingNext.length, detail: 'benötigen eine Aktion' },
+    { label: 'Noch nicht zugewiesen', value: unassignedCount, detail: 'im offenen Bestand' },
   ];
 
   if (error) return <div className={SEITEN_RAND + ' space-y-5'}><PageHeader title="Arbeitsübersicht" subtitle="Deine tägliche Vertriebsarbeit" /><LoadError message="Die Arbeitsübersicht konnte nicht vollständig geladen werden." onRetry={() => void load()} /></div>;
 
-  return <div className={SEITEN_RAND + ' space-y-5'}>
-    <section className="border-b border-border pb-4 pt-1">
+  return <div className={SEITEN_RAND + ' crm-dashboard space-y-5'}>
+    <section className="crm-page-intro border-b border-border pb-4 pt-1">
       <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-text-muted">Vertriebsfokus</div>
       <PageHeader
         title="Arbeitsübersicht"
@@ -92,27 +92,22 @@ export function Dashboard({ onOpenKalender, onOpenLead, onOpenLeads }: { onOpenK
               className={'rounded-md px-2.5 py-1.5 text-xs transition-colors sm:px-3 ' + (scope === value ? 'bg-surface font-semibold text-text-primary shadow-sm ring-1 ring-border' : 'text-text-secondary hover:bg-elevated')}
             >{value === 'mine' ? 'Meine Arbeit' : 'Gesamtes Team'}</button>)}
           </div>
-          <Button variant="secondary" onClick={() => void load()} disabled={busy} aria-label="Arbeitsübersicht aktualisieren">
+          <Button variant="secondary" onClick={() => { void load(); setRankingRevision(value => value + 1); }} disabled={busy} aria-label="Arbeitsübersicht aktualisieren">
             <RefreshCw className={'size-4 ' + (busy ? 'animate-spin' : '')} />
           </Button>
         </div>}
       />
     </section>
 
-    <section aria-label="Vertriebskennzahlen" className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
-      {metrics.map((item) => {
-        const Icon = item.icon;
-        return <Card key={item.label} className={`crm-metric-card grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 ${WORKSPACE_METRIC}`} style={{ '--metric-color': item.color } as CSSProperties}>
-          <span className={'flex size-8 shrink-0 items-center justify-center rounded-lg ' + item.iconClass}><Icon className="size-4" /></span>
-          <span className="min-w-0"><span className="block truncate text-xs font-semibold text-text-secondary">{item.label}</span><span className="mt-0.5 block truncate text-[11px] text-text-muted">{item.detail}</span></span>
-          <span className={`text-right font-display font-bold leading-none tabular-nums text-text-primary ${WORKSPACE_METRIC_VALUE}`}>{busy || error ? '—' : item.value}</span>
-        </Card>;
-      })}
+    <section aria-label="Vertriebskennzahlen" className="crm-facts-line">
+      {metrics.map(item => <div key={item.label} title={item.detail}><span>{item.label}</span><strong>{busy || error ? '—' : item.value}</strong></div>)}
     </section>
 
-    <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(300px,1fr)]">
+    <RankingTable refreshKey={rankingRevision} />
+
+    <div className="crm-dashboard-grid grid items-start gap-5 xl:grid-cols-[minmax(0,1.6fr)_minmax(300px,1fr)]">
       <div className="min-w-0 space-y-6">
-      <Card className="overflow-hidden">
+      <Card className="crm-focus-panel overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
           <div><h2 className="flex items-center gap-2 font-semibold"><span className="flex size-8 items-center justify-center rounded-lg bg-status-warning/10 text-status-warning"><AlarmClock className="size-4" /></span>Nächste Schritte</h2><p className="mt-1.5 text-sm text-text-muted">Fällige Wiedervorlagen zuerst, danach Leads ohne Termin.</p></div>
           <Button variant="ghost" size="sm" onClick={onOpenLeads}>Alle Leads <ArrowRight className="size-4" /></Button>
@@ -131,7 +126,7 @@ export function Dashboard({ onOpenKalender, onOpenLead, onOpenLeads }: { onOpenK
           <div><h2 className="font-semibold">Datenqualität</h2><p className="mt-1 text-sm text-text-muted">Basisdaten aller offenen Leads</p></div>
           <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-status-info/10 text-status-info"><Users className="size-4" /></span>
         </div>
-        <p className="my-5 rounded-xl border border-border-subtle bg-elevated/60 px-4 py-3 text-sm" aria-live="polite">{busy ? 'Basisdaten werden geprüft…' : !active.length ? 'Noch keine offenen Leads vorhanden.' : <><strong className="text-text-primary">{quality.complete} von {active.length}</strong><span className="text-text-secondary"> Leads mit vollständigen Basisdaten</span></>}</p>
+        <p className="my-4 border-b border-border-subtle pb-3 text-sm" aria-live="polite">{busy ? 'Basisdaten werden geprüft…' : !active.length ? 'Noch keine offenen Leads vorhanden.' : <><strong className="text-text-primary">{quality.complete} von {active.length}</strong><span className="text-text-secondary"> Leads mit vollständigen Basisdaten</span></>}</p>
         <div className="space-y-3 text-sm">{[
           { label: 'Ohne Kontaktweg', value: quality.noContact },
           { label: 'Ohne Händlerart', value: quality.noDealerType },

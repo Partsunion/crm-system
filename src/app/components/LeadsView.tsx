@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { CallButton } from '../phone/PhoneUI';
 import {
   Plus, Search, Filter, Trash2, Download, Mail, Phone, Upload, Globe,
   ArrowUp, ArrowDown, ChevronsUpDown, Table2, Columns3, X, Check, ChevronDown, ListPlus, Layers,
@@ -588,7 +589,7 @@ export function LeadsView({
   const stripUrl = (u: string) => u.replace(/^https?:\/\//, '').replace(/\/$/, '');
 
   return (
-    <div className={VOLLE_HOEHE}>
+    <div className={cn(VOLLE_HOEHE, 'crm-leads')}>
       {/* Kopf: bleibt stehen, ueber BEIDEN Spalten.
           Die Kennzahlen sind weiter unten in die Listenspalte gewandert und
           scrollen mit ihr weg — fest im Kopf kosteten sie rund 80 px, die auf
@@ -611,7 +612,7 @@ export function LeadsView({
         </details>
         <Button onClick={() => { setEditingLead(null); setEditFromDetail(false); setIsModalOpen(true); }}><Plus className="size-4" />Neuer Lead</Button>
       </>} />
-      <div className="rounded-xl border border-border-subtle bg-surface shadow-sm">
+      <div className="crm-filter-bar border border-border-subtle bg-surface">
         <div className="flex flex-wrap items-center gap-2 p-3">
           <div className="relative min-w-48 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-text-muted" /><input aria-label="Leads durchsuchen" placeholder="Firma, Kontakt oder E-Mail suchen" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} className={cn(inputClass, 'h-9 pl-9')} /></div>
           <select aria-label="Gespeicherte Ansicht" className={cn(inputClass, 'w-full sm:w-48')} value={activeSavedView} onChange={(event) => selectSavedView(event.target.value)}><option value="">Persönliche Ansichten</option>{savedViews.map((saved) => <option key={saved.name} value={saved.name}>{saved.name}</option>)}</select>
@@ -662,7 +663,7 @@ export function LeadsView({
           ans Ende kam, schob unversehens die Seite weiter. */}
       <div className={cn(ARBEITSFLAECHE, 'mx-auto w-full max-w-[1620px]')}>
         <div ref={listScroll} className={cn(SPALTE_SCROLLT, 'min-w-0 flex-1 space-y-3.5 pb-2 pt-3')}>
-      {!loading && !loadError && <section aria-label="Datenqualität im gesamten Leadbestand" className="rounded-xl border border-border-subtle bg-surface p-3">
+      {!loading && !loadError && <section aria-label="Datenqualität im gesamten Leadbestand" className="crm-quality-rail border border-border-subtle bg-surface p-3">
         <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2"><h2 className="text-xs font-semibold text-text-secondary">Datenpflege · gesamter Bestand</h2><span className="text-xs text-text-muted">Erfasste Angaben, keine externe Verifizierung</span></div>
         <div className="flex flex-wrap gap-2">{([
           { key: 'no_contact', label: 'Kontaktweg fehlt', icon: Phone, tone: 'text-status-danger' },
@@ -688,7 +689,7 @@ export function LeadsView({
             </div>
           </nav>}
           {selectedRealIds.length > 0 && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent-500/20 bg-accent-500/10 px-3 py-2 text-xs text-text-secondary"><span>{selectedRealIds.length} Leads ausgewählt, auch auf anderen Seiten.</span>{!allFilteredSelected && <button className="font-semibold text-accent-500 hover:underline" onClick={() => setSelected(previous => new Set([...previous, ...filteredRealIds]))}>Alle {filteredRealIds.length} gefilterten Leads auswählen</button>}<button className="ml-auto text-text-muted hover:text-text-primary" onClick={clearSelection}>Auswahl aufheben</button></div>}
-          <Card className="hidden overflow-visible md:block">
+          <Card className="crm-table-surface hidden overflow-visible md:block">
             <div className="overflow-x-auto">
               <table className="crm-lead-table w-full text-sm" data-compact={compact}>
                 <thead>
@@ -758,10 +759,7 @@ export function LeadsView({
                               </a>
                             )}
                             {lead.phone && (
-                              <a href={`tel:${lead.phone}`} onClick={(e) => e.stopPropagation()}
-                                className="flex items-center gap-1 text-xs text-text-secondary hover:text-accent-500">
-                                <Phone className="size-3 shrink-0" /><span>{lead.phone}</span>
-                              </a>
+                              <CallButton lead={lead} compact />
                             )}
                           </div>
                         </td>

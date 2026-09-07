@@ -232,7 +232,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
   };
 
   return (
-    <div className={cn(SEITEN_RAND, 'space-y-5')}>
+    <div className={cn(SEITEN_RAND, 'crm-calendar space-y-5')}>
       <PageHeader
         title="Kalender"
         subtitle="Termine und Rückrufe koordinieren · Alle Uhrzeiten Europe/Berlin"
@@ -250,20 +250,20 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
         }
       />
 
-      {!loading && !loadError && <section aria-label="Kalenderlage im sichtbaren Zeitraum" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {!loading && !loadError && <section aria-label="Kalenderlage im sichtbaren Zeitraum" className="crm-calendar-kpis grid grid-cols-2 sm:grid-cols-4">
         {[
           ['Aktiv', periodSummary.active, 'text-accent-500 bg-accent-500/10'],
           ['Bestätigt', periodSummary.confirmed, 'text-status-success bg-status-success/10'],
           ['Rückmeldung offen', periodSummary.proposed, 'text-status-warning bg-status-warning/10'],
           ['Ohne Zuständigkeit', periodSummary.unassigned, 'text-status-danger bg-status-danger/10'],
-        ].map(([label, value, tone]) => <div key={label} className="flex items-center justify-between gap-3 rounded-xl border border-border-subtle bg-surface px-3 py-2.5 shadow-sm"><span className="text-xs font-medium text-text-secondary">{label}</span><span className={cn('rounded-lg px-2 py-1 text-sm font-bold tabular-nums', tone as string)}>{value}</span></div>)}
+        ].map(([label, value, tone]) => <div key={label} className="flex items-center justify-between gap-3 border border-border-subtle bg-surface px-3 py-2.5"><span className="text-xs font-medium text-text-secondary">{label}</span><span className={cn('rounded-md px-2 py-1 text-sm font-bold tabular-nums', tone as string)}>{value}</span></div>)}
       </section>}
 
       {loadError && <LoadError message="Termine konnten nicht geladen werden." onRetry={() => void load()} />}
       <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex rounded-md border border-border-subtle bg-surface p-1">{([{ id: 'day', label: 'Tag' }, { id: 'week', label: 'Woche' }, { id: 'month', label: 'Monat' }, { id: 'agenda', label: 'Agenda' }] as const).map((item) => <button key={item.id} aria-pressed={mode === item.id} onClick={() => setMode(item.id)} className={`rounded px-4 py-1.5 text-sm ${mode === item.id ? 'bg-elevated font-medium' : 'text-text-secondary'}`}>{item.label}</button>)}</div><p className="text-sm text-text-muted">Meeting-Links können hinterlegt werden. Microsoft-365-Synchronisierung ist nicht eingerichtet.</p></div>
       <div className={cn("grid grid-cols-1 gap-5", mode === "month" && "xl:grid-cols-[minmax(0,1fr)_340px]")}>
         {/* Gitter */}
-        <Card className="overflow-auto">
+        <Card className="crm-calendar-surface overflow-auto">
           <div className="flex items-center justify-between border-b border-border-subtle px-4 py-3">
             <div className="text-lg font-semibold text-text-primary">{MONTHS[cursor.getMonth()]} {cursor.getFullYear()}</div>
             <div className="flex items-center gap-1">

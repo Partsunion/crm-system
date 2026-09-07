@@ -269,7 +269,7 @@ function setToken(token: string): void {
 }
 
 /** Authorization-Header für die Bot-API (leer, falls nicht eingeloggt). */
-function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+export function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
   const token = getToken();
   return { 'X-Partsunion-App': 'crm', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extra };
 }

@@ -122,3 +122,230 @@ input[type="radio"] { min-height: auto; }
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── Sales Workbench v3 ──────────────────────────────────────────────────
+   Same geometry as Admin, with a sales-specific rhythm: pipeline state and
+   urgency carry colour; navigation and data surfaces remain calm. */
+
+:root,
+[data-theme] {
+  --radius: 8px;
+}
+
+.crm-sidebar {
+  --text-primary: #f4f7fc;
+  --text-secondary: #d4dce9;
+  --text-tertiary: #aebbcf;
+  --text-muted: #8090a8;
+  --border: #1d3048;
+  --border-strong: #344a66;
+  --overlay: 255 255 255;
+  background: #081629;
+  border-color: #1d3048;
+  color: var(--text-primary);
+  box-shadow: 18px 0 44px -38px rgb(0 8 20 / 0.95);
+}
+
+.crm-sidebar nav {
+  scrollbar-width: thin;
+  scrollbar-color: #2a3d57 transparent;
+}
+
+.crm-sidebar button,
+.crm-sidebar a {
+  letter-spacing: -0.006em;
+}
+
+[data-workspace="crm"] > div > header {
+  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  box-shadow: 0 1px 0 var(--border);
+}
+
+[data-workspace="crm"] main {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent-500) 2.5%, transparent), transparent 22rem),
+    var(--bg-canvas);
+}
+
+[data-workspace="crm"] main h1 {
+  font-size: clamp(1.65rem, 2vw, 2.1rem);
+  letter-spacing: -0.035em;
+}
+
+[data-workspace="crm"] .karte,
+[data-workspace="crm"] .karte-klein {
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  box-shadow: 0 1px 2px rgb(4 12 28 / 0.18);
+}
+
+[data-workspace="crm"] .karte:hover,
+[data-workspace="crm"] .karte-klein:hover {
+  border-color: var(--border-strong);
+}
+
+.crm-page-intro {
+  position: relative;
+  padding-left: 1.25rem;
+}
+
+.crm-page-intro::before {
+  content: '';
+  position: absolute;
+  inset: 4px auto 4px 0;
+  width: 2px;
+  background: var(--accent-500);
+}
+
+.crm-kpi-rail {
+  overflow: hidden;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-surface);
+  box-shadow: 0 1px 2px rgb(4 12 28 / 0.16);
+}
+
+/* Dashboard: quiet work lists and a single typographic line of useful figures. */
+.crm-facts-line { display: flex; flex-wrap: wrap; gap: 12px 30px; padding-block: 0 2px; }
+.crm-facts-line > div { display: flex; align-items: baseline; gap: 10px; }
+.crm-facts-line span { color: var(--text-muted); font-size: 11px; }
+.crm-facts-line strong { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.crm-dashboard .crm-dashboard-grid .karte { background: transparent; border: 0; border-top: 1px solid var(--border); border-radius: 0; box-shadow: none; }
+.crm-dashboard .crm-dashboard-grid .karte > div:first-child:has(h2) { background: transparent; }
+.crm-dashboard .crm-dashboard-grid h2 > span { background: transparent; width: 20px; height: 20px; }
+.crm-dashboard .crm-page-intro { padding-left: 0; }
+.crm-dashboard .crm-page-intro::before { display: none; }
+
+.crm-kpi-rail .crm-metric-card {
+  min-height: 72px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.crm-kpi-rail .crm-metric-card:last-child { border-right: 0; }
+.crm-kpi-rail .crm-metric-card:hover { background: var(--bg-elevated); box-shadow: none; }
+
+.crm-metric-card::after {
+  inset: 11px auto 11px 0;
+  width: 2px;
+}
+
+.crm-dashboard-grid .karte > div:first-child,
+.crm-dashboard-grid .karte > h2:first-child {
+  letter-spacing: -0.012em;
+}
+
+.crm-dashboard-grid .karte > div:first-child:has(h2) {
+  background: color-mix(in srgb, var(--bg-elevated) 36%, transparent);
+  border-bottom: 1px solid var(--border);
+}
+
+.crm-work-row {
+  padding: 12px 18px;
+  border-color: var(--border);
+}
+
+.crm-work-row:hover {
+  background: color-mix(in srgb, var(--accent-500) 4%, var(--bg-surface));
+  box-shadow: inset 2px 0 0 var(--accent-500);
+}
+
+.crm-command-bar,
+.crm-filter-bar,
+.crm-quality-rail {
+  border-radius: 7px;
+  box-shadow: 0 1px 2px rgb(4 12 28 / 0.14);
+}
+
+.crm-command-bar {
+  background: color-mix(in srgb, var(--bg-surface) 97%, var(--accent-500));
+}
+
+.crm-pipeline-board {
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.crm-pipeline-column {
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-elevated) 68%, var(--bg-canvas));
+}
+
+.crm-pipeline-column > div:first-child {
+  background: var(--bg-surface);
+}
+
+.crm-pipeline-column article {
+  border-radius: 6px;
+  box-shadow: 0 1px 1px rgb(4 12 28 / 0.18);
+}
+
+.crm-pipeline-column article:hover {
+  background: color-mix(in srgb, var(--bg-surface) 95%, var(--accent-500));
+  box-shadow: inset 2px 0 0 var(--accent-500);
+}
+
+.crm-filter-bar > div:first-child {
+  background: color-mix(in srgb, var(--bg-elevated) 30%, transparent);
+}
+
+.crm-quality-rail {
+  background: color-mix(in srgb, var(--bg-surface) 96%, var(--accent-500));
+}
+
+.crm-table-surface {
+  border-radius: 7px;
+  box-shadow: none;
+}
+
+.crm-table-surface thead {
+  background: var(--bg-elevated);
+}
+
+.crm-table-surface tbody tr {
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.crm-table-surface tbody tr:hover {
+  background: color-mix(in srgb, var(--accent-500) 4%, var(--bg-surface));
+  box-shadow: inset 2px 0 0 var(--accent-500);
+}
+
+.crm-calendar-kpis {
+  gap: 0;
+  overflow: hidden;
+  border-radius: 7px;
+  box-shadow: 0 1px 2px rgb(4 12 28 / 0.14);
+}
+
+.crm-calendar-kpis > div {
+  margin-left: -1px;
+}
+
+.crm-calendar-kpis > div:first-child { margin-left: 0; }
+
+.crm-calendar-surface {
+  border-radius: 7px;
+}
+
+.crm-calendar-surface > div:first-child {
+  background: color-mix(in srgb, var(--bg-elevated) 40%, transparent);
+}
+
+[data-workspace="crm"] :is(input, textarea, select):not([type="checkbox"]):not([type="radio"]) {
+  border-radius: 6px;
+}
+
+@media (max-width: 1279px) {
+  .crm-kpi-rail .crm-metric-card:nth-child(2) { border-right: 0; }
+  .crm-kpi-rail .crm-metric-card:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+}
+
+@media (max-width: 639px) {
+  .crm-kpi-rail .crm-metric-card { border-right: 0; border-bottom: 1px solid var(--border); }
+  .crm-kpi-rail .crm-metric-card:last-child { border-bottom: 0; }
+  .crm-calendar-kpis > div:nth-child(odd) { margin-left: 0; }
+  .crm-calendar-kpis > div:nth-child(-n+2) { margin-bottom: -1px; }
+}
