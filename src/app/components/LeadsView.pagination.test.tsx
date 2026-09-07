@@ -7,7 +7,7 @@ vi.mock('../utils/storage', () => ({
   getLeads: async () => leads, getLeadLists: async () => [], getAppointmentAdmins: async () => [], getStatusOptions: () => ['Neu'],
   getCurrentUser: () => ({ id: 'pagination-test' }), getSettings: () => ({ pipelineStages: [] }),
 }));
-beforeEach(() => vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+beforeEach(() => { localStorage.clear(); vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it('renders only one page and preserves explicit selection across page navigation', async () => {
   const { container } = render(<LeadsView />);
@@ -28,3 +28,27 @@ it('renders only one page and preserves explicit selection across page navigatio
   expect(table.querySelectorAll('tbody tr')).toHaveLength(1);
   expect(screen.getByLabelText('Seite 1 von 1')).toBeInTheDocument();
 }, 15000);
+
+it('saves the current filters in one click and restores them after reset and reload',async()=>{
+  const prompt=vi.spyOn(window,'prompt');
+  const {unmount,container}=render(<LeadsView />);
+  await waitFor(()=>expect(container.querySelectorAll('tbody tr')).toHaveLength(25));
+  fireEvent.change(screen.getByLabelText('Leads durchsuchen'),{target:{value:'Firma 07'}});
+  fireEvent.click(screen.getByRole('button',{name:'Filter speichern'}));
+  expect(prompt).not.toHaveBeenCalled();
+  const saved=JSON.parse(localStorage.getItem('crm_saved_views:pagination-test')!);
+  expect(saved).toHaveLength(1);expect(saved[0]).toMatchObject({search:'Firma 07',sortField:'updatedAt',sortDirection:'desc'});
+  const savedName=saved[0].name;
+  fireEvent.change(screen.getByLabelText('Leads durchsuchen'),{target:{value:'Firma 072'}});
+  fireEvent.click(screen.getByRole('button',{name:'Filter speichern'}));
+  expect(JSON.parse(localStorage.getItem('crm_saved_views:pagination-test')!)).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button',{name:'Filter zurücksetzen'}));
+  expect(screen.getByLabelText('Leads durchsuchen')).toHaveValue('');
+  expect(screen.getByLabelText('Gespeicherte Filter')).toHaveValue('');
+  expect(container.querySelectorAll('tbody tr')).toHaveLength(25);
+  unmount();render(<LeadsView />);
+  fireEvent.change(screen.getByLabelText('Gespeicherte Filter'),{target:{value:savedName}});
+  expect(screen.getByLabelText('Leads durchsuchen')).toHaveValue('Firma 072');
+  await waitFor(()=>expect(screen.getByLabelText('Seite 1 von 1')).toBeInTheDocument());
+  prompt.mockRestore();
+});

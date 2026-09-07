@@ -3,7 +3,7 @@ import { CallButton } from '../phone/PhoneUI';
 import {
   Plus, Search, Filter, Trash2, Download, Mail, Phone, Upload, Globe,
   ArrowUp, ArrowDown, ChevronsUpDown, Table2, Columns3, X, Check, ChevronDown, ListPlus, Layers,
-  UserPlus, CalendarClock, Copy, ContactRound, ListTodo, ChevronLeft, ChevronRight,
+  UserPlus, CalendarClock, Copy, ContactRound, ListTodo, ChevronLeft, ChevronRight, Save, RotateCcw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { sendBrochureBatch } from '../utils/brochure';
@@ -157,14 +157,19 @@ export function LeadsView({
     setActiveSeg(saved.segment); setSortField(saved.sortField); setSortDirection(saved.sortDirection); setSelected(new Set());
   }
   function saveView() {
-    const name = window.prompt('Name für diese persönliche Filteransicht', activeSavedView)?.trim();
-    if (!name) return;
+    const summary = [searchTerm.trim() ? `Suche: ${searchTerm.trim()}` : '', ...activeFilters.map(filter => filter.label)].filter(Boolean).join(' · ') || 'Alle Leads';
+    const baseName = summary.length > 80 ? summary.slice(0, 77) + '…' : summary;
+    let name = activeSavedView || baseName;
+    if (!activeSavedView) {
+      let suffix = 2;
+      while (savedViews.some(saved => saved.name === name)) name = `${baseName} (${suffix++})`;
+    }
     const item: SavedView = { name, search: searchTerm, status: statusFilter, priority: priorityFilter, assignee: assignedToFilter, dealer: dealerTypeFilter, country: countryFilter, quality: qualityFilter, due: dueOnly, segment: activeSeg, sortField, sortDirection };
     const next = [...savedViews.filter((saved) => saved.name !== name), item].slice(-20);
-    try { localStorage.setItem(viewStorageKey(), JSON.stringify(next)); setSavedViews(next); setActiveSavedView(name); toast.success('Persönliche Ansicht auf diesem Gerät gespeichert.'); }
+    try { localStorage.setItem(viewStorageKey(), JSON.stringify(next)); setSavedViews(next); setActiveSavedView(name); toast.success('Aktuelle Filter gespeichert.'); }
     catch { toast.error('Der Browser erlaubt das Speichern der Ansicht nicht.'); }
   }
-  function resetFilters() { setSearchTerm(''); setStatusFilter('all'); setPriorityFilter('all'); setAssignedToFilter('all'); setDealerTypeFilter('all'); setCountryFilter('all'); setQualityFilter('all'); setDueOnly(false); setActiveSeg('all'); setActiveSavedView(''); }
+  function resetFilters() { setSearchTerm(''); setStatusFilter('all'); setPriorityFilter('all'); setAssignedToFilter('all'); setDealerTypeFilter('all'); setCountryFilter('all'); setQualityFilter('all'); setDueOnly(false); setActiveSeg('all'); setActiveSavedView(''); setSortField('updatedAt'); setSortDirection('desc'); setSelected(new Set()); }
 
   useEffect(() => {
     loadLeads();
@@ -615,10 +620,15 @@ export function LeadsView({
       <div className="crm-filter-bar border border-border-subtle bg-surface">
         <div className="flex flex-wrap items-center gap-2 p-3">
           <div className="relative min-w-48 flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-text-muted" /><input aria-label="Leads durchsuchen" placeholder="Firma, Kontakt oder E-Mail suchen" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} className={cn(inputClass, 'h-9 pl-9')} /></div>
-          <select aria-label="Gespeicherte Ansicht" className={cn(inputClass, 'w-full sm:w-48')} value={activeSavedView} onChange={(event) => selectSavedView(event.target.value)}><option value="">Persönliche Ansichten</option>{savedViews.map((saved) => <option key={saved.name} value={saved.name}>{saved.name}</option>)}</select>
           <Button variant="secondary" aria-expanded={filtersOpen} aria-controls="lead-filters" onClick={() => setFiltersOpen(!filtersOpen)}><Filter className="size-4" />Filter{activeFilterCount ? ' (' + activeFilterCount + ')' : ''}</Button>
           <Button variant={dueOnly ? 'primary' : 'ghost'} aria-pressed={dueOnly} onClick={() => setDueOnly(!dueOnly)}><CalendarClock className="size-4" />Fällig ({dueCount})</Button>
           <ViewToggle view={view} onChange={setView} />
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border-subtle px-3 py-2">
+          <select aria-label="Gespeicherte Filter" title={activeSavedView || 'Gespeicherte Filter'} className={cn(inputClass, 'h-8 w-full text-xs sm:w-48')} value={activeSavedView} onChange={(event) => selectSavedView(event.target.value)}><option value="">Gespeicherte Filter</option>{savedViews.map((saved) => <option key={saved.name} value={saved.name}>{saved.name}</option>)}</select>
+          <button type="button" onClick={saveView} className="inline-flex min-h-8 items-center gap-1.5 rounded-md px-1.5 text-xs font-medium text-accent-500 hover:bg-accent-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"><Save className="size-3.5" />Filter speichern</button>
+          <button type="button" onClick={resetFilters} aria-label="Filter zurücksetzen" className="inline-flex min-h-8 items-center gap-1.5 rounded-md px-1.5 text-xs text-text-secondary hover:bg-elevated hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"><RotateCcw className="size-3.5" />Zurücksetzen</button>
+          {activeFilterCount > 0 && !filtersOpen && <div className="flex flex-wrap items-center gap-2 sm:ml-auto">{activeFilters.map((filter) => <button type="button" key={filter.label} onClick={filter.clear} className="inline-flex items-center gap-1.5 rounded-md border border-accent-500/20 bg-accent-500/10 px-2 py-1 text-xs text-accent-500">{filter.label}<X className="size-3" /><span className="sr-only">entfernen</span></button>)}</div>}
         </div>
         {filtersOpen && <div id="lead-filters" className="space-y-3 border-t border-border-subtle p-3">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -631,9 +641,8 @@ export function LeadsView({
             <label className="space-y-1 text-sm text-text-secondary">Priorität<CustomSelect className="w-full" value={priorityFilter === 'all' ? 'Alle Prioritäten' : priorityFilter} onChange={(value) => setPriorityFilter(value === 'Alle Prioritäten' ? 'all' : value)} options={['Alle Prioritäten', 'Hoch', 'Mittel', 'Niedrig']} /></label>
           </div>
           <div><p className="mb-2 text-sm text-text-secondary">Quelle oder Liste</p><SegmentBar active={activeSeg} onSelect={(key) => { setActiveSeg(key); clearSelection(); }} lists={lists} segCount={segCount} onCreate={createAndAssign} onDeleteList={handleDeleteList} /></div>
-          <div className="flex flex-wrap gap-2"><Button size="sm" variant="secondary" onClick={saveView}>Als persönliche Ansicht speichern</Button><Button size="sm" variant="ghost" onClick={resetFilters}>Filter zurücksetzen</Button>{activeSavedView && <Button size="sm" variant="ghost" onClick={() => { const next = savedViews.filter((saved) => saved.name !== activeSavedView); try { localStorage.setItem(viewStorageKey(), JSON.stringify(next)); setSavedViews(next); setActiveSavedView(''); } catch { toast.error('Ansicht konnte nicht entfernt werden.'); } }}>Ansicht entfernen</Button>}</div>
+          {activeSavedView && <Button size="sm" variant="ghost" onClick={() => { const next = savedViews.filter((saved) => saved.name !== activeSavedView); try { localStorage.setItem(viewStorageKey(), JSON.stringify(next)); setSavedViews(next); setActiveSavedView(''); } catch { toast.error('Ansicht konnte nicht entfernt werden.'); } }}>Gespeicherten Filter entfernen</Button>}
         </div>}
-        {activeFilterCount > 0 && !filtersOpen && <div className="flex flex-wrap items-center gap-2 border-t border-border-subtle px-3 py-2 text-sm text-text-secondary">{activeFilters.map((filter) => <button key={filter.label} onClick={filter.clear} className="inline-flex items-center gap-1.5 rounded-md border border-accent-500/20 bg-accent-500/10 px-2 py-1 text-accent-500">{filter.label}<X className="size-3" /><span className="sr-only">entfernen</span></button>)}<button onClick={resetFilters} className="px-2 py-1 text-xs text-text-muted hover:text-text-primary">Alle zurücksetzen</button></div>}
       </div>
 
       {loadError && <LoadError message={loadError} onRetry={() => void loadLeads()} />}
@@ -662,6 +671,7 @@ export function LeadsView({
           Vorher scrollten Seite und Maske gleichzeitig, und wer in der Maske
           ans Ende kam, schob unversehens die Seite weiter. */}
       <div className={cn(ARBEITSFLAECHE, 'mx-auto w-full max-w-[1620px]')}>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div ref={listScroll} className={cn(SPALTE_SCROLLT, 'min-w-0 flex-1 space-y-3.5 pb-2 pt-3')}>
       {!loading && !loadError && <section aria-label="Datenqualität im gesamten Leadbestand" className="crm-quality-rail border border-border-subtle bg-surface p-3">
         <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2"><h2 className="text-xs font-semibold text-text-secondary">Datenpflege · gesamter Bestand</h2><span className="text-xs text-text-muted">Erfasste Angaben, keine externe Verifizierung</span></div>
@@ -677,17 +687,6 @@ export function LeadsView({
         <BoardView statuses={statuses} leads={filteredLeads} onOpen={setDetailLead} onQuickAdd={quickAdd} />
       ) : (
         <>
-          {!loading && !loadError && filteredLeads.length > 0 && <nav aria-label="Lead-Ergebnisseiten" className="sticky top-0 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-border-subtle bg-surface px-3 py-2 shadow-sm">
-            <span className="mr-auto text-xs font-medium tabular-nums text-text-secondary">{pagination.start + 1}–{pagination.end} von {filteredLeads.length}</span>
-            <div className="flex flex-wrap items-center gap-2">
-            <select aria-label="Leads pro Seite" className={cn(inputClass, 'h-9 w-auto text-xs')} value={pagination.size} onChange={event => { pagination.setSize(Number(event.target.value)); listScroll.current?.scrollTo?.({ top: 0 }); }}><option value={25}>25 pro Seite</option><option value={50}>50 pro Seite</option><option value={100}>100 pro Seite</option></select>
-            <div className="flex shrink-0 items-center gap-1">
-            <IconButton aria-label="Vorherige Lead-Seite" disabled={pagination.page === 1} onClick={() => { pagination.setPage(pagination.page - 1); listScroll.current?.scrollTo?.({ top: 0 }); }}><ChevronLeft className="size-4" /></IconButton>
-            <span className="text-xs tabular-nums" aria-label={`Seite ${pagination.page} von ${pagination.pages}`}>{pagination.page} / {pagination.pages}</span>
-            <IconButton aria-label="Nächste Lead-Seite" disabled={pagination.page === pagination.pages} onClick={() => { pagination.setPage(pagination.page + 1); listScroll.current?.scrollTo?.({ top: 0 }); }}><ChevronRight className="size-4" /></IconButton>
-            </div>
-            </div>
-          </nav>}
           {selectedRealIds.length > 0 && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent-500/20 bg-accent-500/10 px-3 py-2 text-xs text-text-secondary"><span>{selectedRealIds.length} Leads ausgewählt, auch auf anderen Seiten.</span>{!allFilteredSelected && <button className="font-semibold text-accent-500 hover:underline" onClick={() => setSelected(previous => new Set([...previous, ...filteredRealIds]))}>Alle {filteredRealIds.length} gefilterten Leads auswählen</button>}<button className="ml-auto text-text-muted hover:text-text-primary" onClick={clearSelection}>Auswahl aufheben</button></div>}
           <Card className="crm-table-surface hidden overflow-visible md:block">
             <div className="overflow-x-auto">
@@ -839,6 +838,18 @@ export function LeadsView({
           </div>
         </>
       )}
+        </div>
+        {!loading && !loadError && view === 'table' && filteredLeads.length > 0 && <nav aria-label="Lead-Ergebnisseiten" className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border-subtle bg-surface px-3 py-2">
+          <span className="mr-auto text-xs tabular-nums text-text-secondary">{pagination.start + 1}–{pagination.end} von {filteredLeads.length}</span>
+          <div className="flex items-center gap-2">
+            <select aria-label="Leads pro Seite" className={cn(inputClass, 'h-8 w-auto text-xs')} value={pagination.size} onChange={event => { pagination.setSize(Number(event.target.value)); listScroll.current?.scrollTo?.({ top: 0 }); }}><option value={25}>25 pro Seite</option><option value={50}>50 pro Seite</option><option value={100}>100 pro Seite</option></select>
+            <div className="flex shrink-0 items-center gap-1">
+              <IconButton aria-label="Vorherige Lead-Seite" disabled={pagination.page === 1} onClick={() => { pagination.setPage(pagination.page - 1); listScroll.current?.scrollTo?.({ top: 0 }); }}><ChevronLeft className="size-4" /></IconButton>
+              <span className="text-xs tabular-nums" aria-label={`Seite ${pagination.page} von ${pagination.pages}`}>{pagination.page} / {pagination.pages}</span>
+              <IconButton aria-label="Nächste Lead-Seite" disabled={pagination.page === pagination.pages} onClick={() => { pagination.setPage(pagination.page + 1); listScroll.current?.scrollTo?.({ top: 0 }); }}><ChevronRight className="size-4" /></IconButton>
+            </div>
+          </div>
+        </nav>}
         </div>
 
         {/* Die Maske klebt nicht mehr, sie FUELLT ihre Spalte. Kleben hiess:
