@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import type { Lead, User } from '../utils/storage';
-import { phoneApi, type CallLog, type PhoneStatus } from './api';
+import { oauthErrorMessage, phoneApi, type CallLog, type PhoneStatus } from './api';
 import { CallNotes } from './notes';
 import type { BrowserPhone, SdkCall } from './sdk';
 import { PhoneDock } from './PhoneUI';
@@ -14,7 +14,7 @@ export function PhoneProvider({children,user,onOpenLead}:{children:ReactNode;use
   const [ready,setReady]=useState(false),[busy,setBusy]=useState(false),[opened,setOpened]=useState(()=>new URLSearchParams(window.location.search).has('webex')),[minimized,setMinimized]=useState(false);
   const [call,setCall]=useState<CallLog|null>(null),[live,setLive]=useState(false),[state,setState]=useState(''),[incoming,setIncoming]=useState(false);
   const [muted,setMuted]=useState(false),[held,setHeld]=useState(false),[connectedAt,setConnectedAt]=useState<number|null>(null);
-  const [error,setError]=useState(()=>new URLSearchParams(window.location.search).get('webex')==='error'?'Webex konnte nicht verbunden werden. Bitte Konto, Berechtigungen und Einrichtung prüfen.':''),[saving,setSaving]=useState(false),[noteError,setNoteError]=useState('');
+  const [error,setError]=useState(()=>{const query=new URLSearchParams(window.location.search);return query.get('webex')==='error'?oauthErrorMessage(query.get('webexReason')):'';}),[saving,setSaving]=useState(false),[noteError,setNoteError]=useState('');
   const [noteController,setNoteController]=useState<CallNotes|null>(null);
   const [,rerender]=useState(0);
   const sdk=useRef<BrowserPhone|null>(null),audio=useRef<HTMLAudioElement>(null),callRef=useRef<CallLog|null>(null),liveRef=useRef(false);
@@ -60,7 +60,7 @@ export function PhoneProvider({children,user,onOpenLead}:{children:ReactNode;use
     alive.current=true;
     void phoneApi<PhoneStatus>('/status').then(result=>{if(alive.current){setStatus(result);setStatusError('');}}).catch(error=>{if(alive.current)setStatusError(message(error));});
     const params=new URLSearchParams(window.location.search);
-    if(params.has('webex')){if(params.get('webex')==='connected')toast.success('Webex-Konto verbunden.');params.delete('webex');window.history.replaceState(window.history.state,'',window.location.pathname+(params.size?'?'+params:'')+window.location.hash);}
+    if(params.has('webex')){if(params.get('webex')==='connected')toast.success('Webex-Konto verbunden.');params.delete('webex');params.delete('webexReason');window.history.replaceState(window.history.state,'',window.location.pathname+(params.size?'?'+params:'')+window.location.hash);}
     const unload=(event:BeforeUnloadEvent)=>{if(liveRef.current||notes.current?.dirty){event.preventDefault();event.returnValue='';}};
     const logout=(event:Event)=>{if(liveRef.current||notes.current?.dirty){event.preventDefault();open();toast.error('Bitte das Gespräch beenden und die Notiz speichern, bevor du dich abmeldest.');}};
     window.addEventListener('beforeunload',unload);window.addEventListener('crm:logout-check',logout);

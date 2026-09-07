@@ -1,5 +1,21 @@
 import { authHeaders } from '../utils/storage';
 
+export function oauthErrorMessage(reason:string|null):string {
+  const messages:Record<string,string>={
+    callback:'Die Webex-Rückmeldung war unvollständig. Bitte die Telefonie in diesem CRM-Tab erneut verbinden.',
+    state:'Die Webex-Anmeldung ist abgelaufen oder gehört zu einem anderen CRM-Tab. Bitte hier neu verbinden.',
+    denied:'Webex hat den Zugriff nicht freigegeben. Bitte erneut verbinden und den angeforderten Zugriff erlauben.',
+    scopes:'Webex hat die angeforderten Berechtigungen nicht freigegeben. Bitte die Scopes der Partsunion-CRM-Integration prüfen.',
+    provider:'Webex hat die Anmeldung abgelehnt. Bitte die Webex-Integration und das verwendete Konto prüfen.',
+    token:'Webex konnte die Anmeldung nicht bestätigen. Bitte erneut verbinden; bei erneutem Fehler muss die Einrichtung geprüft werden.',
+    organization:'Bitte mit dem Webex-Konto eurer PartsUnion-Organisation anmelden.',
+    assigned:'Dieses Webex-Konto ist bereits mit einem anderen CRM-Benutzer verbunden. Bitte dort die Telefonie trennen oder ein anderes Webex-Konto verwenden.',
+    save:'Die Webex-Verbindung konnte nicht gespeichert werden. Bitte erneut versuchen.',
+  };
+  const key=reason||'';
+  return Object.prototype.hasOwnProperty.call(messages,key)?messages[key]:'Webex konnte nicht verbunden werden. Bitte Konto, Berechtigungen und Einrichtung prüfen.';
+}
+
 export interface PhoneStatus {
   configured: boolean; connected: boolean; manager: boolean; reportingConnected?: boolean;
   trackingReady?: boolean; reconnectRequired?: boolean; number?: string; name?: string;
