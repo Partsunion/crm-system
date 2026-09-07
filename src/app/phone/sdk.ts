@@ -38,8 +38,11 @@ export class BrowserPhone {
     });
     await eventOnce(this.client,'ready');
     await this.client.register();
+    // The SDK catches WDM/Mercury failures internally and resolves register().
+    // Such a failure says nothing about whether the account owns a phone line.
+    if (!this.client.registered) throw new Error('Webex hat die Browser-Anmeldung nicht freigegeben. Bitte die Telefonie erneut verbinden und die Webex-Berechtigungen prüfen.');
     this.line=Object.values(this.client.callingClient?.getLines()||{})[0];
-    if (!this.line) throw new Error('Für dieses Konto wurde keine Webex-Calling-Leitung gefunden.');
+    if (!this.line) throw new Error('Webex konnte die Browser-Telefonie nicht initialisieren. Bitte die Webex-Calling-Einrichtung prüfen.');
     const onIncoming=(value:unknown)=>{
       const call=value as SdkCall;
       if (this.call) {void call.end().catch(()=>undefined);return;}

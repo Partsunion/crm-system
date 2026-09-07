@@ -2,7 +2,7 @@ import { authHeaders } from '../utils/storage';
 
 export interface PhoneStatus {
   configured: boolean; connected: boolean; manager: boolean; reportingConnected?: boolean;
-  trackingReady?: boolean; number?: string; name?: string;
+  trackingReady?: boolean; reconnectRequired?: boolean; number?: string; name?: string;
 }
 export interface CallLog {
   id: string; leadId: string | null; company: string; userId: string; userName: string;

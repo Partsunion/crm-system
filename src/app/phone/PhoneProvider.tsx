@@ -107,6 +107,7 @@ export function PhoneProvider({children,user,onOpenLead}:{children:ReactNode;use
   };
   const activate=async()=>{
     if(readyRef.current)return;
+    if(status?.reconnectRequired)throw new Error('Bitte die Telefonie erneut verbinden und den erweiterten Webex-Zugriff freigeben.');
     if(sdk.current){await sdk.current.dispose();sdk.current=null;activeLock.current?.();activeLock.current=null;}
     await acquireTab();
     try{

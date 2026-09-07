@@ -59,3 +59,17 @@ it('shows a save failure and keeps the draft after hangup',async()=>{
   expect(sessionStorage.getItem('crm-call-draft:sales:call-a')).toBe('Nicht verlieren');
   expect((textarea as HTMLTextAreaElement).value).toBe('Nicht verlieren');
 });
+
+it('offers a new Webex grant for an old connection and does not initialize the SDK or prepare a call',async()=>{
+  api.mockImplementation(async(path)=>path==='/status'?{
+    configured:true,connected:true,trackingReady:true,reconnectRequired:true,number:'+4932221803514',manager:false,
+  }:{items:[]});
+  render(workspace());await waitFor(()=>expect(api).toHaveBeenCalledWith('/status'));
+  fireEvent.click(screen.getByRole('button',{name:/Werkstatt A im CRM/}));
+  expect(await screen.findByRole('button',{name:'Telefonie erneut verbinden'})).toBeTruthy();
+  expect(screen.getByText('+4932221803514')).toBeTruthy();
+  expect(screen.queryByRole('button',{name:'Telefonie im Browser aktivieren'})).toBeNull();
+  expect(api).not.toHaveBeenCalledWith('/browser-token','POST');
+  expect(sdk.dial).not.toHaveBeenCalled();
+  expect(api.mock.calls.some(([path,method])=>path==='/calls'&&method==='POST')).toBe(false);
+});
