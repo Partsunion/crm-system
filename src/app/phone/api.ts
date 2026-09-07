@@ -10,6 +10,7 @@ export function oauthErrorMessage(reason:string|null):string {
     token:'Webex konnte die Anmeldung nicht bestätigen. Bitte erneut verbinden; bei erneutem Fehler muss die Einrichtung geprüft werden.',
     organization:'Bitte mit dem Webex-Konto eurer PartsUnion-Organisation anmelden.',
     assigned:'Dieses Webex-Konto ist bereits mit einem anderen CRM-Benutzer verbunden. Bitte dort die Telefonie trennen oder ein anderes Webex-Konto verwenden.',
+    active:'Die Leitung führt gerade ein Gespräch. Bitte zuerst auflegen und danach erneut zuordnen.',
     save:'Die Webex-Verbindung konnte nicht gespeichert werden. Bitte erneut versuchen.',
   };
   const key=reason||'';

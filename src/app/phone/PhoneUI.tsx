@@ -3,7 +3,7 @@ import { ArrowDownLeft, ArrowUpRight, Check, ChevronDown, ChevronUp, Circle, Ext
 import type { Lead } from '../utils/storage';
 import { getCurrentUser } from '../utils/storage';
 import { usePhone } from './context';
-import { callLabel, durationLabel, phoneApi, type CallLog } from './api';
+import { callLabel, durationLabel, oauthErrorMessage, phoneApi, type CallLog } from './api';
 import { Button, Card, cn, inputClass } from '../components/ui-kit';
 
 function Timer({since,seconds}:{since:number|null;seconds?:number|null}) {
@@ -85,6 +85,10 @@ export function PhoneDock({onResumeAudio}:{onResumeAudio:()=>void}) {
     </div>
     {!phone.minimized&&<div className="max-h-[calc(100dvh-155px)] space-y-4 overflow-y-auto p-4">
       {phone.error&&<div role="alert" className="rounded-lg bg-status-danger/10 p-3 text-xs text-status-danger">{phone.error}{phone.error.includes('Audio-Wiedergabe')&&<button className="mt-2 block font-semibold underline" onClick={onResumeAudio}>Ton aktivieren</button>}</div>}
+      {!active&&phone.status?.manager&&['assigned','active'].some(reason=>phone.error===oauthErrorMessage(reason))&&<div className="space-y-2 text-xs text-text-secondary">
+        <p>Du kannst die Leitung nach erneuter Webex-Anmeldung diesem CRM-Konto zuordnen. Bitte die Telefonie im alten CRM-Tab vorher schließen. Die bisherige CRM-Zuordnung wird ersetzt; alte Anrufprotokolle bleiben erhalten.</p>
+        <Button className="w-full" disabled={phone.busy} onClick={()=>void phone.connect('calling',true)}><RefreshCw size={15}/>Leitung diesem Konto zuordnen</Button>
+      </div>}
       {!current&&!active?<ConnectionSettings/>:<>
         <div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="text-base font-semibold tabular-nums">{current?.number||'Nummer wird zugeordnet …'}</p><p className="mt-1 text-[11px] text-text-muted">{current?.direction==='inbound'?'An':'Von'} {current?.ownNumber||phone.status?.number||'deiner Leitung'}</p></div>{current?.leadId&&<button type="button" onClick={phone.openLead} title="Lead öffnen" className="inline-flex shrink-0 items-center gap-1 rounded-md bg-elevated px-2 py-1.5 text-xs text-text-secondary"><ExternalLink size={12}/>Lead</button>}</div>
         {active&&<>

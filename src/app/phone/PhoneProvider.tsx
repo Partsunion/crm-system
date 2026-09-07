@@ -79,9 +79,9 @@ export function PhoneProvider({children,user,onOpenLead}:{children:ReactNode;use
     const timer=setTimeout(()=>void saveNote().catch(()=>undefined),700);
     return()=>clearTimeout(timer);
   },[noteText]);
-  const connect=async(purpose:'calling'|'reporting'='calling')=>{
+  const connect=async(purpose:'calling'|'reporting'='calling',replaceAssignment=false)=>{
     if(liveRef.current)return;await saveNote();
-    const result=await phoneApi<{url:string}>('/connect','POST',{purpose});window.location.assign(result.url);
+    const result=await phoneApi<{url:string}>('/connect','POST',{purpose,replaceAssignment});window.location.assign(result.url);
   };
   const acquireTab=async()=>{
     if(!navigator.locks)throw new Error('Bitte einen aktuellen Chrome-, Edge- oder Safari-Browser verwenden.');
@@ -144,7 +144,7 @@ export function PhoneProvider({children,user,onOpenLead}:{children:ReactNode;use
   };
   const disconnect=async()=>{if(liveRef.current)return;await saveNote();await sdk.current?.dispose();sdk.current=null;activeLock.current?.();activeLock.current=null;await phoneApi('/connection','DELETE');await refresh();};
   const value:PhoneContextValue={status,statusError,ready,busy,opened,minimized,call,live,state,incoming,muted,held,connectedAt,error,saving,noteError,notes:noteController,
-    open,minimize:()=>setMinimized(true),close,refresh,connect:(purpose)=>perform(()=>connect(purpose)),activate:()=>perform(activate),disconnect:()=>perform(disconnect),start,
+    open,minimize:()=>setMinimized(true),close,refresh,connect:(purpose,replaceAssignment)=>perform(()=>connect(purpose,replaceAssignment)),activate:()=>perform(activate),disconnect:()=>perform(disconnect),start,
     answer:()=>perform(async()=>{await sdk.current?.answer();setIncoming(false);}),
     end:()=>perform(async()=>{await sdk.current?.end();}),
     mute:()=>{sdk.current?.mute(!muted);setMuted(!muted);},hold:()=>perform(async()=>{await sdk.current?.hold(!held);}),digit:value=>sdk.current?.digit(value),

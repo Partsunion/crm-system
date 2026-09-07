@@ -8,7 +8,7 @@ export interface PhoneContextValue {
   call:CallLog|null; live:boolean; state:string; incoming:boolean; muted:boolean; held:boolean; connectedAt:number|null;
   error:string; saving:boolean; noteError:string; notes:CallNotes|null;
   open:()=>void; minimize:()=>void; close:()=>Promise<void>; refresh:()=>Promise<void>;
-  connect:(purpose?:'calling'|'reporting')=>Promise<void>; activate:()=>Promise<void>; disconnect:()=>Promise<void>;
+  connect:(purpose?:'calling'|'reporting',replaceAssignment?:boolean)=>Promise<void>; activate:()=>Promise<void>; disconnect:()=>Promise<void>;
   start:(lead:Pick<Lead,'id'|'company'|'phone'>)=>Promise<void>; answer:()=>Promise<void>; end:()=>Promise<void>;
   mute:()=>void; hold:()=>Promise<void>; digit:(digit:string)=>void;
   record:(action:'start'|'stop'|'pause'|'resume',consent?:boolean)=>Promise<void>;

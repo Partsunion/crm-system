@@ -17,6 +17,7 @@ const api=vi.mocked(phoneApi),user={id:'sales',name:'Alex',username:'alex',role:
 const lead={id:'lead-a',company:'Werkstatt A',phone:'0228 12345'};
 const call:CallLog={id:'call-a',leadId:'lead-a',company:lead.company,userId:'sales',userName:'Alex',number:'+4922812345',ownNumber:'+4922855555',direction:'outbound',state:'preparing',recordingState:null,createdAt:new Date().toISOString(),answeredAt:null,endedAt:null,duration:null,note:'',noteVersion:0};
 beforeEach(()=>{
+  window.history.replaceState({},'', '/');
   vi.clearAllMocks();sessionStorage.clear();vi.mocked(getCurrentUser).mockReturnValue(user);
   Object.defineProperty(navigator,'locks',{configurable:true,value:{request:(_key:unknown,_options:unknown,fn:(lock:object)=>Promise<void>)=>fn({})}});
   api.mockImplementation(async(path,method,body)=>{
@@ -72,4 +73,24 @@ it('offers a new Webex grant for an old connection and does not initialize the S
   expect(api).not.toHaveBeenCalledWith('/browser-token','POST');
   expect(sdk.dial).not.toHaveBeenCalled();
   expect(api.mock.calls.some(([path,method])=>path==='/calls'&&method==='POST')).toBe(false);
+});
+
+it.each([true,false])('shows explicit line reassignment only for a manager with an assignment conflict (manager=%s)',async(manager)=>{
+  window.history.replaceState({},'', '/settings?webex=error&webexReason=assigned');
+  api.mockImplementation(async(path)=>{
+    if(path==='/status')return {configured:true,connected:false,manager};
+    if(path==='/connect')throw new Error('OAuth navigation stopped for test');
+    return {items:[]};
+  });
+  render(workspace());
+  await screen.findByText(/Dieses Webex-Konto ist bereits/);
+  await waitFor(()=>expect(api).toHaveBeenCalledWith('/status'));
+  if(manager){
+    const button=await screen.findByRole('button',{name:'Leitung diesem Konto zuordnen'});
+    fireEvent.click(button);
+    await waitFor(()=>expect(api).toHaveBeenCalledWith('/connect','POST',{purpose:'calling',replaceAssignment:true}));
+  }else{
+    expect(screen.queryByRole('button',{name:'Leitung diesem Konto zuordnen'})).toBeNull();
+  }
+  expect(api).not.toHaveBeenCalledWith('/browser-token','POST');
 });
