@@ -3,11 +3,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KalenderView } from './KalenderView';
 
-const api = vi.hoisted(() => ({ create: vi.fn(), update: vi.fn(), appointments: vi.fn(), confirm: vi.fn(), success: vi.fn(), error: vi.fn() }));
+const api = vi.hoisted(() => ({ create: vi.fn(), update: vi.fn(), appointments: vi.fn(), admins: vi.fn(), confirm: vi.fn(), success: vi.fn(), error: vi.fn() }));
 vi.mock('sonner', () => ({ toast: { success: api.success, error: api.error, warning: vi.fn() } }));
 vi.mock('../utils/storage', () => ({
   getAppointments: api.appointments,
-  getAppointmentAdmins: async () => [{ id: 'sales-1', username: 'anna', name: 'Anna' }], getTeams: async () => [], getCurrentUser: () => ({ id: 'sales-1', username: 'anna' }),
+  getAppointmentAdmins: api.admins, getTeams: async () => [], getCurrentUser: () => ({ id: 'sales-1', username: 'anna' }),
   createAppointment: api.create, updateAppointment: api.update, cancelAppointment: vi.fn(), deleteAppointment: vi.fn(),
 }));
 vi.mock('../utils/useAppointmentConflicts', () => ({ useAppointmentConflicts: () => ({ loading: false, error: false, conflicts: [], confirmed: false, verify: async () => true }) }));
@@ -15,8 +15,22 @@ vi.mock('./CalendarTimeGrid', () => ({ CalendarTimeGrid: () => <div>Kalender-Zei
 vi.mock('./AppointmentConflictReview', () => ({ AppointmentConflictReview: () => null }));
 
 describe('calendar appointment editor', () => {
-  beforeEach(() => { sessionStorage.clear(); vi.clearAllMocks(); api.appointments.mockResolvedValue([]); api.create.mockResolvedValue({ appointment: {}, inviteSent: true }); api.confirm.mockReturnValue(false); vi.stubGlobal('confirm', api.confirm); });
+  beforeEach(() => { sessionStorage.clear(); vi.clearAllMocks(); api.admins.mockResolvedValue([{id:'sales-1',username:'anna',name:'Anna'}]); api.appointments.mockResolvedValue([]); api.create.mockResolvedValue({ appointment: {}, inviteSent: true }); api.confirm.mockReturnValue(false); vi.stubGlobal('confirm', api.confirm); });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+  it('creates Teams through the connected owner and exposes the returned join link',async()=>{
+    api.admins.mockResolvedValue([{id:'sales-1',username:'anna',name:'Anna',teamsAvailable:true}]);
+    api.create.mockResolvedValue({inviteSent:true,calendarSynced:true,appointment:{id:'new',type:'sales',title:'Test',status:'proposed',start_at:'2026-09-09T10:00',end_at:'2026-09-09T10:30',duration_minutes:30,customer_email:'kunde@example.de',meeting_link:'https://teams.microsoft.com/l/meetup-join/test',teams_meeting:{requested:true,state:'ready'}}});
+    render(<KalenderView/>);
+    await waitFor(()=>expect(screen.getByRole('option',{name:'Anna'})).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button',{name:'Neuer Termin'}));
+    expect(screen.getByRole('checkbox',{name:/Teams-Besprechung automatisch erstellen/})).toBeChecked();
+    expect(screen.getByLabelText('Meeting-Link')).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('E-Mail (für die Einladung)'),{target:{value:'kunde@example.de'}});
+    fireEvent.click(screen.getByRole('button',{name:'Anlegen'}));
+    expect(await screen.findByRole('link',{name:'Teams beitreten'})).toHaveAttribute('href','https://teams.microsoft.com/l/meetup-join/test');
+    expect(api.create).toHaveBeenCalledWith(expect.objectContaining({createTeams:true,assigneeId:'sales-1',meetingLink:''}));
+  });
 
   it('requires a valid invitation address and normalizes a safe meeting link', async () => {
     render(<KalenderView />);

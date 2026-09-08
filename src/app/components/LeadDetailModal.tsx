@@ -19,7 +19,7 @@ import {
   getAppointments, createAppointment, updateAppointment, cancelAppointment, getAppointmentAdmins,
   saveLead, type Appointment, type AppointmentAdmin,
 } from '../utils/storage';
-import { sendBrochure } from '../utils/brochure';
+import { LeadEmailComposer } from './LeadEmailComposer';
 import {
   Modal, Button, IconButton, Badge, StatusBadge, PriorityPill, EmptyState, SectionLabel, inputClass, cn,
 } from './ui-kit';
@@ -68,6 +68,7 @@ interface LeadDetailModalProps {
 
 /** Gemeinsame Hülle: Overlay-Modal ODER gedocktes Seitenpanel. */
 function Shell({
+  suspended,
   variant,
   onClose,
   title,
@@ -76,6 +77,7 @@ function Shell({
   footer,
   children,
 }: {
+  suspended?: boolean;
   variant: 'modal' | 'panel';
   onClose: () => void;
   title: React.ReactNode;
@@ -111,7 +113,7 @@ function Shell({
     );
   }
   return (
-    <Modal onClose={onClose} size="xl" title={title} subtitle={subtitle} headerAccessory={headerAccessory} footer={footer} bodyClassName="space-y-4">
+    <Modal open={!suspended} onClose={onClose} size="xl" title={title} subtitle={subtitle} headerAccessory={headerAccessory} footer={footer} bodyClassName="space-y-4">
       {children}
     </Modal>
   );
@@ -226,8 +228,8 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState('');
 
-  // ── Broschüren-Versand über Resend ──────────────────────────────────────
-  const [brochureSending, setBrochureSending] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailState, setEmailState] = useState({dirty:false,busy:false});
 
   // ── Geplante Anrufe / Rückrufe (echte Termine, verknüpft über companyId) ──
   const [appts, setAppts] = useState<Appointment[]>([]);
@@ -240,7 +242,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
   const [planAssignee, setPlanAssignee] = useState('');
   const [planNote, setPlanNote] = useState('');
   const planReview = useAppointmentConflicts(planOpen, `${planDate}T${planTime}`, planDuration, planAssignee);
-  useWorkspaceGuard(Boolean(note.trim() || dmInput.trim() || reached !== null || moveTo !== status || editingId || planOpen), saving || planSaving || brochureSending);
+  useWorkspaceGuard(Boolean(note.trim() || dmInput.trim() || reached !== null || moveTo !== status || editingId || planOpen || emailState.dirty), saving || planSaving || emailState.busy);
 
   const reload = useCallback(async () => {
     setLoading(true); setActivityError(false);
@@ -267,24 +269,6 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
     [admins, currentUser],
   );
   useEffect(() => { if (myAdminId) setPlanAssignee((prev) => prev || myAdminId); }, [myAdminId]);
-
-  const handleSendBrochure = async () => {
-    if (brochureSending) return;
-    setBrochureSending(true);
-    try {
-      const result = await sendBrochure(lead);
-      toast.success(`Broschüre an ${result.recipient} gesendet (${result.recipientSource}).`);
-      // The server records the confirmed send exactly once.
-      try {
-        await reload();
-        onLeadChanged?.();
-      } catch { /* Protokoll-Eintrag ist nicht kritisch */ }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Broschüre konnte nicht versendet werden.');
-    } finally {
-      setBrochureSending(false);
-    }
-  };
 
   const scheduleCall = async () => {
     if (planSaving) return;
@@ -383,7 +367,8 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
   const canModify = (a: Activity) => isAdmin || (!!currentName && a.createdByName === currentName);
 
   return (
-    <Shell
+    <><Shell
+      suspended={emailOpen}
       variant={variant}
       onClose={() => { if (mayLeaveWorkspace()) onClose(); }}
       title={lead.company}
@@ -436,9 +421,9 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
                 <CallButton lead={lead} />
               )}
               {lead.email && (
-                <a href={`mailto:${lead.email}`} className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-elevated px-3 text-sm font-medium text-text-secondary ring-1 ring-inset ring-border-subtle transition-colors hover:text-text-primary">
+                <button type="button" onClick={()=>setEmailOpen(true)} className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-elevated px-3 text-sm font-medium text-text-secondary ring-1 ring-inset ring-border-subtle transition-colors hover:text-text-primary">
                   <Mail className="size-4" />E-Mail
-                </a>
+                </button>
               )}
               {onOpenCalendar && <Button variant="secondary" size="sm" onClick={() => onOpenCalendar(lead)}><Calendar className="size-4" /> Zum Kalender</Button>}
             </div>
@@ -610,15 +595,12 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
 
           <button
             type="button"
-            onClick={() => void handleSendBrochure()}
+            onClick={() => setEmailOpen(true)}
             hidden={detailTab !== "info"}
-            disabled={brochureSending}
-            title="Broschüre an die gespeicherte E-Mail-Adresse senden"
+            title="Persönliche E-Mail an den Lead schreiben"
             className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-elevated px-3 text-sm font-medium text-text-secondary ring-1 ring-inset ring-border-subtle transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-text-secondary"
           >
-            {brochureSending
-              ? <><Loader2 className="size-4 animate-spin" />Adresse prüfen &amp; senden…</>
-              : <><FileText className="size-4" />Broschüre senden</>}
+            <Mail className="size-4" />E-Mail schreiben
           </button>
 
           {/* ── Geplante Anrufe / Rückrufe ─────────────────────────── */}
@@ -775,7 +757,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
           </div>
         </div>
       </div>
-    </Shell>
+    </Shell>{emailOpen && <LeadEmailComposer leadId={lead.id} onState={setEmailState} onClose={()=>setEmailOpen(false)} onSent={()=>{void reload();onLeadChanged?.();}}/>}</>
   );
 }
 

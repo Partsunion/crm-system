@@ -61,7 +61,7 @@ function buildGrid(cursor: Date): Date[] {
   return Array.from({ length: 42 }, (_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
 }
 
-type FormState = AppointmentInput & { date?: string; time?: string };
+type FormState = AppointmentInput & { date?: string; time?: string; managedTeams?: boolean };
 const emptyForm = (): FormState => ({ type: 'sales', durationMinutes: 30, sendInvite: true, date: '', time: '10:00' });
 
 export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (leadId: string) => void; lead?: Lead | null; onClearLead?: () => void } = {}) {
@@ -140,7 +140,9 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
     setEditingId(null);
     const owner = lead?.assignedTo?.toLowerCase();
     const assignee = owner ? admins.find(a => a.id === lead?.assignedTo || a.username?.toLowerCase() === owner || a.name?.toLowerCase() === owner) : undefined;
-    setForm({ ...emptyForm(), date: dayKey || selectedDay || todayKey,
+    const assigneeId = assignee?.id || myAdminId || undefined;
+    setForm({ ...emptyForm(), date: dayKey || selectedDay || todayKey, assigneeId,
+      createTeams: Boolean(admins.find(a => a.id === assigneeId)?.teamsAvailable),
       ...(lead ? { companyId: lead.id, customerName: lead.contactPerson || lead.company, customerEmail: lead.email || '', customerPhone: lead.phone || '', title: `Sales-Call · ${lead.company}`, assigneeId: assignee?.id || myAdminId || undefined } : {}),
     });
     setInviteError('');
@@ -153,7 +155,7 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
       type: a.type as AppointmentInput['type'], title: a.title, notes: a.notes || '', companyId: a.company_id || undefined,
       assigneeId: a.assignee_id || undefined, customerName: a.customer_name || '', customerEmail: a.customer_email || '',
       customerPhone: a.customer_phone || '', durationMinutes: a.duration_minutes, location: a.location || '',
-      meetingLink: a.meeting_link || '', sendInvite: false, date: dayKeyOf(a.start_at), time: timeOf(a.start_at),
+      meetingLink: a.meeting_link || '', managedTeams: Boolean(a.teams_meeting?.requested), sendInvite: false, date: dayKeyOf(a.start_at), time: timeOf(a.start_at),
     });
     setFormDirty(false); setFormErrors({});
     setDetail(null);
@@ -181,7 +183,7 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
       type: form.type, title: form.title?.trim() || undefined, notes: form.notes, assigneeId: form.assigneeId || '', companyId: form.companyId,
       customerName: form.customerName?.trim(), customerEmail: form.customerEmail?.trim(), customerPhone: form.customerPhone?.trim(),
       durationMinutes: form.durationMinutes, location: form.location?.trim(), meetingLink: form.meetingLink?.trim() ? safeWebsiteUrl(form.meetingLink) : '',
-      start: `${form.date}T${form.time}`, sendInvite: form.sendInvite,
+      start: `${form.date}T${form.time}`, sendInvite: form.sendInvite, createTeams: form.createTeams,
     };
     saveLock.current = true; setSaving(true);
     try {
@@ -194,7 +196,10 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
       if (failedInvite) {
         toast.warning('Termin gespeichert. Die Einladung konnte nicht versendet werden.');
         setDetail(res.appointment);
-      } else toast.success(res.inviteSent ? 'Termin gespeichert · Einladung per E-Mail verschickt.' : 'Termin gespeichert.');
+      } else {
+        toast.success(res.inviteSent ? 'Termin gespeichert · Einladung per E-Mail verschickt.' : 'Termin gespeichert.');
+        if (res.appointment.teams_meeting?.requested) setDetail(res.appointment);
+      }
       setCreateOpen(false);
       setFormDirty(false); setFormErrors({});
       setSelectedDay(form.date!);
@@ -225,9 +230,10 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
     if (resendLock.current) return;
     resendLock.current = true; setResending(true); setInviteError('');
     try {
-      const r = await updateAppointment(a.id, { resendInvite: true });
+      const r = await updateAppointment(a.id, { resendInvite: Boolean(a.customer_email), ...(a.teams_meeting?.requested ? { createTeams: true } : {}) });
       setDetail(r.appointment);
       if (r.inviteSent) toast.success('Einladung per E-Mail verschickt.');
+      else if (r.calendarSynced && !a.customer_email) toast.success('Teams-Termin synchronisiert.');
       else { setInviteError(r.inviteError || 'Bitte erneut versuchen.'); toast.error('Einladung konnte nicht versendet werden.'); }
       await load();
     } catch { setInviteError('Erneutes Senden fehlgeschlagen. Bitte erneut versuchen.'); toast.error('Erneutes Senden fehlgeschlagen.'); }
@@ -453,7 +459,7 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
                 </select>
               </Field>
               <Field label="Zuständig">
-                <select value={form.assigneeId || ''} onChange={(e) => changeForm((f) => ({ ...f, assigneeId: e.target.value || undefined }))} className={inputSized}>
+                <select disabled={form.managedTeams} value={form.assigneeId || ''} onChange={(e) => changeForm((f) => ({ ...f, assigneeId: e.target.value || undefined, createTeams: !!f.createTeams && Boolean(admins.find(a => a.id === e.target.value)?.teamsAvailable) }))} className={inputSized}>
                   <option value="">— Niemand —</option>
                   {admins.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
@@ -477,13 +483,16 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
             <Field label="E-Mail (für die Einladung)"><input type="email" value={form.customerEmail || ''} aria-invalid={Boolean(formErrors.customerEmail)} placeholder="kunde@firma.de" onChange={(e) => changeForm((f) => ({ ...f, customerEmail: e.target.value }))} className={inputSized} />{formErrors.customerEmail && <p role="alert" className="mt-1 text-xs text-status-danger">{formErrors.customerEmail}</p>}</Field>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="Ort"><input value={form.location || ''} placeholder="Telefon / vor Ort" onChange={(e) => changeForm((f) => ({ ...f, location: e.target.value }))} className={inputSized} /></Field>
-              <Field label="Meeting-Link"><input value={form.meetingLink || ''} aria-invalid={Boolean(formErrors.meetingLink)} placeholder="https://meet…" onChange={(e) => changeForm((f) => ({ ...f, meetingLink: e.target.value }))} className={inputSized} />{formErrors.meetingLink && <p role="alert" className="mt-1 text-xs text-status-danger">{formErrors.meetingLink}</p>}</Field>
+              <Field label="Meeting-Link"><input disabled={form.createTeams || form.managedTeams} value={form.meetingLink || ''} aria-invalid={Boolean(formErrors.meetingLink)} placeholder={form.createTeams ? 'Wird beim Speichern erstellt' : 'https://meet…'} onChange={(e) => changeForm((f) => ({ ...f, meetingLink: e.target.value }))} className={inputSized} />{formErrors.meetingLink && <p role="alert" className="mt-1 text-xs text-status-danger">{formErrors.meetingLink}</p>}</Field>
             </div>
+            {form.managedTeams ? <p className="text-xs text-text-secondary">Mit Teams verbunden. Änderungen an Zeit und Titel werden im Kalender des Organisators übernommen.</p> : admins.find(a => a.id === form.assigneeId)?.teamsAvailable ? <label className="flex items-start gap-2 text-sm text-text-secondary">
+              <input type="checkbox" checked={!!form.createTeams} onChange={e => changeForm(f => ({ ...f, createTeams: e.target.checked, ...(e.target.checked ? { meetingLink: '' } : {}) }))} className="mt-0.5 size-4 shrink-0 accent-accent-500" />
+              <span>Teams-Besprechung automatisch erstellen<span className="mt-1 block text-xs text-text-muted">Im persönlichen Microsoft-Kalender. Der Kunde erhält den Beitrittslink in E-Mail und Kalenderanhang.</span></span>
+            </label> : <p className="text-xs text-text-muted">Für diese zuständige Person ist kein Teams-Kalender verbunden. Ein vorhandener Meeting-Link kann oben eingefügt werden.</p>}
             <Field label="Interne Notizen">
               <textarea rows={2} value={form.notes || ''} placeholder="z. B. Teams-Beratung / vor Ort / telefonischer Rückruf" onChange={(e) => changeForm((f) => ({ ...f, notes: e.target.value }))} className={cn(inputSized, 'h-auto py-2')} />
               <p className="mt-1 text-xs text-text-muted">Diese Notizen bleiben im CRM und werden nicht an den Kunden geschickt.</p>
             </Field>
-            <p className="text-xs text-text-secondary">Für einen Teams-Termin den Link der Besprechung oben einfügen. Er wird in E-Mail und Kalenderanhang übernommen. Das CRM erstellt derzeit keine eigene Teams-Besprechung.</p>
             <AppointmentConflictReview review={review} />
             <label className="flex items-center gap-2 rounded-md border border-border-subtle bg-canvas p-2.5 text-sm text-text-secondary">
               <input type="checkbox" checked={!!form.sendInvite} onChange={(e) => changeForm((f) => ({ ...f, sendInvite: e.target.checked }))} className="size-4 accent-accent-500" />
@@ -513,7 +522,7 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
             size="sm"
             footer={
               <div className="flex flex-wrap justify-end gap-2">
-                {meetingHref && <a href={meetingHref} target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center gap-2 rounded-md bg-accent-600 px-3 text-sm font-medium text-white transition-colors hover:bg-accent-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"><ExternalLink className="size-4" />Meeting öffnen</a>}
+                {meetingHref && detail.status !== 'cancelled' && detail.teams_meeting?.state !== 'failed' && <a href={meetingHref} target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center gap-2 rounded-md bg-accent-600 px-3 text-sm font-medium text-white transition-colors hover:bg-accent-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"><ExternalLink className="size-4" />{detail.teams_meeting?.requested ? 'Teams beitreten' : 'Meeting öffnen'}</a>}
                 {detail.company_id && onOpenLead && (
                   <Button size="sm" variant="outline" onClick={() => { setDetail(null); onOpenLead(detail.company_id!); }}>
                     <ExternalLink className="size-4" /> Lead öffnen
@@ -523,6 +532,7 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
                 <Button size="sm" variant="outline" onClick={() => openEdit(detail)}><RotateCcw className="size-4" /> Verschieben</Button>
                 {detail.public_token && <Button size="sm" variant="outline" onClick={() => copyLink(detail)}><Link2 className="size-4" /> Link</Button>}
                 {detail.customer_email && detail.status !== 'cancelled' && <Button size="sm" variant="outline" disabled={resending} onClick={() => resend(detail)}>{resending ? <Loader2 className="size-4 animate-spin" /> : <Mail className="size-4" />} {resending ? 'Wird versendet …' : detail.invite_sent_at ? 'Erneut einladen' : 'Einladung senden'}</Button>}
+                {!detail.customer_email && detail.teams_meeting?.state === 'failed' && <Button size="sm" variant="outline" disabled={resending} onClick={() => resend(detail)}>Teams synchronisieren</Button>}
                 {detail.status !== 'completed' && detail.status !== 'cancelled' && <Button size="sm" variant="outline" onClick={() => setStatus(detail, 'completed')}><CheckCircle2 className="size-4" /> Erledigt</Button>}
                 {detail.status !== 'no_show' && detail.status !== 'cancelled' && <Button size="sm" variant="outline" onClick={() => setStatus(detail, 'no_show')}><Ban className="size-4" /> No-Show</Button>}
                 {/* Absagen (mit Kundenmail) nur bei Kunden-Terminen; interne Slots: nur Löschen. */}
@@ -538,6 +548,7 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
               {detail.customer_phone && <Row icon={<Phone className="size-4" />} text={detail.customer_phone} />}
               {(detail.meeting_link || detail.location) && <Row icon={<MapPin className="size-4" />} text={detail.meeting_link || detail.location || ''} />}
               {inviteError && <p role="alert" className="rounded-md bg-status-danger/10 p-3 text-sm text-status-danger">Termin gespeichert, Einladung nicht versendet: {inviteError} Über „Einladung senden“ kannst du es erneut versuchen.</p>}
+              {!inviteError && detail.teams_meeting?.state === 'failed' && <p role="alert" className="rounded-md bg-status-danger/10 p-3 text-sm text-status-danger">Teams konnte nicht synchronisiert werden: {detail.teams_meeting.error} Bitte erneut synchronisieren oder einladen.</p>}
               {detail.invite_sent_at && <div className="text-xs text-text-muted">Zuletzt per E-Mail verschickt: {new Date(detail.invite_sent_at).toLocaleString('de-DE', { timeZone: 'Europe/Berlin' })}.</div>}
               {detail.notes && <div className="rounded-md border border-border-subtle bg-canvas p-2.5 text-sm text-text-muted">{detail.notes}</div>}
             </div>

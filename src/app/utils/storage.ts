@@ -1069,6 +1069,8 @@ export type AppointmentType = 'quali' | 'sales' | 'call' | 'other';
 export type AppointmentStatus = 'proposed' | 'confirmed' | 'declined' | 'cancelled' | 'completed' | 'no_show';
 
 export interface Appointment {
+  teams_meeting?: { requested?: boolean; state?: 'pending' | 'ready' | 'failed' | 'cancelled'; error?: string };
+  invitation_from?: string | null;
   id: string;
   type: string;
   title: string;
@@ -1094,9 +1096,10 @@ export interface Appointment {
   updated_at: string;
 }
 
-export interface AppointmentAdmin { id: string; username: string; name: string; email: string }
+export interface AppointmentAdmin { id: string; username: string; name: string; email: string; teamsAvailable?: boolean }
 
 export interface AppointmentInput {
+  createTeams?: boolean;
   type?: AppointmentType;
   title?: string;
   notes?: string;

@@ -912,12 +912,12 @@ export function LeadsView({
             Hoehe musste aus Kopfzeile und Klebeabstand errechnet werden. Jetzt
             ist sie einfach so hoch wie die Arbeitsflaeche, ohne jede
             Rechnung. */}
-        {detailLead && !batch && wideScreen && (
-          <aside className="crm-lead-detail-pane flex min-h-0 w-[500px] shrink-0 flex-col 2xl:w-[580px]">
+        {detailLead && !batch && (
+          <aside className={wideScreen ? 'crm-lead-detail-pane flex min-h-0 w-[500px] shrink-0 flex-col 2xl:w-[580px]' : 'contents'}>
             <LeadDetailModal
               onOpenCalendar={onOpenCalendar}
               key={detailLead.id}
-              variant="panel"
+              variant={wideScreen ? 'panel' : 'modal'}
               navigation={leadNavigation}
               lead={detailLead}
               onClose={() => setDetailLead(null)}
@@ -956,13 +956,6 @@ export function LeadsView({
             setDetailLead(l);
           } : undefined}
         />
-      )}
-      {/* Schmale Screens: klassisches Modal statt Seitenpanel */}
-      {detailLead && !batch && !wideScreen && (
-        <LeadDetailModal key={detailLead.id} navigation={leadNavigation} lead={detailLead} onClose={() => setDetailLead(null)} onOpenCalendar={onOpenCalendar}
-          onEdit={(lead) => { setDetailLead(null); setEditingLead(lead); setEditFromDetail(true); setIsModalOpen(true); }}
-          onLeadChanged={loadLeads}
-          onDelete={() => handleDeleteLead(detailLead.id)} />
       )}
     </div>
   );

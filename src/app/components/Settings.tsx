@@ -37,6 +37,7 @@
  */
 import { useState } from 'react';
 import { PhoneSettingsCard } from '../phone/PhoneUI';
+import { CrmMailSettings } from './LeadEmailComposer';
 import { Plus, Trash2, Save, Tag, Package, Briefcase, ListChecks, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { getSettings, getLeads, getCurrentUser, type Settings as SettingsType } from '../utils/storage';
@@ -52,7 +53,7 @@ export function Settings() {
   const [saved, setSaved] = useState(false);
   const [speichert, setSpeichert] = useState(false);
   const [savedSnapshot, setSavedSnapshot] = useState(() => JSON.stringify(getSettings()));
-  const [section, setSection] = useState<'phone'|'fields'|'company'>('phone');
+  const [section, setSection] = useState<'phone'|'mail'|'fields'|'company'>('phone');
   const dirty = JSON.stringify(settings) !== savedSnapshot;
   const canManage = getCurrentUser()?.role === 'manager' || Boolean(getCurrentUser()?.app_access?.admin);
   useWorkspaceGuard(dirty, speichert);
@@ -123,9 +124,10 @@ export function Settings() {
         }
       />
 
-      <nav className="flex gap-2 border-b border-border-subtle" aria-label="Einstellungsbereiche">{([{id:'phone',label:'Telefonie'},{id:'fields',label:'CRM-Felder'},{id:'company',label:'Unternehmen'}] as const).map(tab=><button key={tab.id} type="button" className="crm-view-tab" aria-pressed={section===tab.id} onClick={()=>setSection(tab.id)}>{tab.label}</button>)}</nav>
+      <nav className="flex flex-wrap gap-2 border-b border-border-subtle" aria-label="Einstellungsbereiche">{([{id:'phone',label:'Telefonie'},{id:'mail',label:'E-Mail'},{id:'fields',label:'CRM-Felder'},{id:'company',label:'Unternehmen'}] as const).map(tab=><button key={tab.id} type="button" className="crm-view-tab" aria-pressed={section===tab.id} onClick={()=>setSection(tab.id)}>{tab.label}</button>)}</nav>
       {dirty && <p role="status" className="text-xs text-status-warning">Ungespeicherte Änderungen</p>}
       {section === 'phone' && <PhoneSettingsCard />}
+      {section === 'mail' && <CrmMailSettings />}
       {section === 'fields' && <fieldset disabled={!canManage || speichert} className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
         <ListEditor
           icon={<ListChecks className="size-4" />}
