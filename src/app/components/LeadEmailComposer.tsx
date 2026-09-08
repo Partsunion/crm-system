@@ -57,12 +57,12 @@ export function LeadEmailComposer({leadId,conversationNotes='',onClose,onSent,on
    <dl className="grid grid-cols-[52px_1fr] gap-x-3 gap-y-2 border-b border-border-subtle pb-4 text-sm"><dt className="text-text-muted">Von</dt><dd className="break-words font-medium">{draft?.sender?`${draft.sender.name} <${draft.sender.address}>`:'Kein persönliches Postfach verbunden'}</dd><dt className="text-text-muted">An</dt><dd className="break-words">{draft?.recipient||'Keine E-Mail-Adresse im Lead'}</dd></dl>
    {draft?.error&&<p role="alert" className="text-sm text-status-warning">{draft.error}</p>}
    {draft&&!recipientValid&&<p role="alert" className="text-sm text-status-warning">Bitte zuerst eine gültige E-Mail-Adresse in den Stammdaten des Leads hinterlegen.</p>}
-   <div className="space-y-2 border-b border-border-subtle pb-4">
+   {!preview&&<div className="space-y-2 border-b border-border-subtle pb-4">
     <label htmlFor="mail-focus" className="text-xs font-medium text-text-secondary">Was soll die E-Mail aufgreifen?</label>
     <input id="mail-focus" value={instructions} maxLength={1000} disabled={attempted||generating} onChange={e=>setInstructions(e.target.value)} placeholder="Optional: z. B. Lagerbestand ansprechen, kurz halten …" className={inputSized}/>
     <div className="flex flex-wrap items-center gap-3"><Button variant="ghost" size="sm" disabled={attempted||generating||!draft?.aiAvailable||!draft?.sender} onClick={()=>void generate()}>{generating?<Loader2 className="size-3.5 animate-spin"/>:<Sparkles className="size-3.5"/>}{generating?'Text wird personalisiert …':'Neu formulieren'}</Button>{previous&&!attempted&&!generating&&<button type="button" className="inline-flex items-center gap-1 text-xs text-text-muted" onClick={()=>{setSubject(previous.subject);setBody(previous.body);setPrevious(null);setPreview(false);}}><Undo2 className="size-3.5"/>Vorherigen Text wiederherstellen</button>}</div>
     <p className="text-xs text-text-muted">{draft?.aiAvailable?'Berücksichtigt Händlerdaten und Gesprächsnotizen. Bitte Fakten vor dem Versand prüfen.':'Texthilfe noch nicht verbunden. Du kannst diese Vorlage selbst bearbeiten.'}</p>
-   </div>
+   </div>}
    {preview?<iframe title="Vorschau der Partsunion-E-Mail" srcDoc={html} sandbox="" referrerPolicy="no-referrer" className="h-[min(58vh,660px)] w-full rounded-md border border-border-subtle bg-white"/>:<>
     <Field label="Betreff"><input value={subject} maxLength={180} disabled={attempted||generating||previewing} onChange={e=>setSubject(e.target.value)} className={inputSized}/></Field>
     <Field label="Nachricht"><textarea value={body} maxLength={10000} rows={11} disabled={attempted||generating||previewing} onChange={e=>setBody(e.target.value)} className={cn(inputSized,'h-auto resize-y py-3 text-sm leading-6')}/></Field>
