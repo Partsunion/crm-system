@@ -13,5 +13,5 @@ async function request<T>(leadId: string, operation: string, body: unknown, sign
   if (!response.ok) throw new Error(result.error || result.message || 'Die Bearbeitung ist gerade nicht möglich. Bitte erneut versuchen.');
   return result;
 }
-export const personalizeCrmMail = (leadId: string, input: {conversationNotes?: string; instructions?: string; subject?: string; body?: string}, signal?: AbortSignal) => request<CrmMailDraft>(leadId, 'personalize', input, signal);
+export const personalizeCrmMail = (leadId: string, input: {includeBrochure?: boolean; conversationNotes?: string; instructions?: string; subject?: string; body?: string}, signal?: AbortSignal) => request<CrmMailDraft>(leadId, 'personalize', input, signal);
 export const transcribeCrmNote = (leadId: string, audio: Blob, signal?: AbortSignal) => request<{text: string}>(leadId, 'transcription', audio, signal);
