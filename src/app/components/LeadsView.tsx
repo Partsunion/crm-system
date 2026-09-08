@@ -113,6 +113,7 @@ export function LeadsView({
   onPendingLeadHandled,
   pendingWorkView = null,
   onWorkViewHandled,
+  onOpenCalendar,
 }: {
   pendingAction?: 'new' | 'import' | null;
   onPendingHandled?: () => void;
@@ -121,6 +122,7 @@ export function LeadsView({
   onPendingLeadHandled?: () => void;
   pendingWorkView?: LeadWorkRequest | null;
   onWorkViewHandled?: () => void;
+  onOpenCalendar?: (lead: Lead) => void;
 } = {}) {
   const username = getCurrentUser()?.username;
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -913,6 +915,7 @@ export function LeadsView({
         {detailLead && !batch && wideScreen && (
           <aside className="crm-lead-detail-pane flex min-h-0 w-[500px] shrink-0 flex-col 2xl:w-[580px]">
             <LeadDetailModal
+              onOpenCalendar={onOpenCalendar}
               key={detailLead.id}
               variant="panel"
               navigation={leadNavigation}
@@ -956,7 +959,7 @@ export function LeadsView({
       )}
       {/* Schmale Screens: klassisches Modal statt Seitenpanel */}
       {detailLead && !batch && !wideScreen && (
-        <LeadDetailModal key={detailLead.id} navigation={leadNavigation} lead={detailLead} onClose={() => setDetailLead(null)}
+        <LeadDetailModal key={detailLead.id} navigation={leadNavigation} lead={detailLead} onClose={() => setDetailLead(null)} onOpenCalendar={onOpenCalendar}
           onEdit={(lead) => { setDetailLead(null); setEditingLead(lead); setEditFromDetail(true); setIsModalOpen(true); }}
           onLeadChanged={loadLeads}
           onDelete={() => handleDeleteLead(detailLead.id)} />

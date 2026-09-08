@@ -23,7 +23,7 @@ import {
 import {
   getAppointments, getAppointmentAdmins, createAppointment, updateAppointment, cancelAppointment, deleteAppointment,
   getCurrentUser, type Appointment, type AppointmentAdmin, type AppointmentInput, type AppointmentStatus,
-  getTeams, type CrmTeam,
+  getTeams, type CrmTeam, type Lead,
 } from '../utils/storage';
 import {
   PageHeader, Card, Button, IconButton, Field, Modal, inputSized, EmptyState, cn, SEITEN_RAND,
@@ -64,7 +64,7 @@ function buildGrid(cursor: Date): Date[] {
 type FormState = AppointmentInput & { date?: string; time?: string };
 const emptyForm = (): FormState => ({ type: 'sales', durationMinutes: 30, sendInvite: true, date: '', time: '10:00' });
 
-export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => void } = {}) {
+export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (leadId: string) => void; lead?: Lead | null; onClearLead?: () => void } = {}) {
   const currentUser = getCurrentUser();
   const [cursor, setCursor] = useState<Date>(() => new Date());
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -79,6 +79,9 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const saveLock = useRef(false);
   const [saving, setSaving] = useState(false);
+  const resendLock = useRef(false);
+  const [resending, setResending] = useState(false);
+  const [inviteError, setInviteError] = useState('');
   const [detail, setDetail] = useState<Appointment | null>(null);
   const [mode, setMode] = useWorkspacePreference<CalendarMode>('calendar.mode', 'week', ['day','week','month','agenda']);
   const [teams, setTeams] = useState<CrmTeam[]>([]);
@@ -86,7 +89,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
   const [statusFilter, setStatusFilter] = useWorkspacePreference<string>('calendar.status', 'active');
   const review = useAppointmentConflicts(createOpen, `${form.date || ''}T${form.time || ''}`, form.durationMinutes || 30, form.assigneeId, editingId || undefined);
   const [loadError, setLoadError] = useState(false);
-  useWorkspaceGuard(createOpen && formDirty, saving);
+  useWorkspaceGuard(createOpen && formDirty, saving || resending);
 
   const grid = useMemo(() => calendarDays(cursor, mode), [cursor, mode]);
   const todayKey = toKey(new Date());
@@ -135,14 +138,19 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
 
   function openCreate(dayKey?: string) {
     setEditingId(null);
-    setForm({ ...emptyForm(), date: dayKey || selectedDay || todayKey });
+    const owner = lead?.assignedTo?.toLowerCase();
+    const assignee = owner ? admins.find(a => a.id === lead?.assignedTo || a.username?.toLowerCase() === owner || a.name?.toLowerCase() === owner) : undefined;
+    setForm({ ...emptyForm(), date: dayKey || selectedDay || todayKey,
+      ...(lead ? { companyId: lead.id, customerName: lead.contactPerson || lead.company, customerEmail: lead.email || '', customerPhone: lead.phone || '', title: `Sales-Call · ${lead.company}`, assigneeId: assignee?.id || myAdminId || undefined } : {}),
+    });
+    setInviteError('');
     setFormDirty(false); setFormErrors({});
     setCreateOpen(true);
   }
   function openEdit(a: Appointment) {
     setEditingId(a.id);
     setForm({
-      type: a.type as AppointmentInput['type'], title: a.title, notes: a.notes || '',
+      type: a.type as AppointmentInput['type'], title: a.title, notes: a.notes || '', companyId: a.company_id || undefined,
       assigneeId: a.assignee_id || undefined, customerName: a.customer_name || '', customerEmail: a.customer_email || '',
       customerPhone: a.customer_phone || '', durationMinutes: a.duration_minutes, location: a.location || '',
       meetingLink: a.meeting_link || '', sendInvite: false, date: dayKeyOf(a.start_at), time: timeOf(a.start_at),
@@ -170,31 +178,27 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
     if (review.loading || review.error) { toast.error('Die Verfügbarkeit konnte noch nicht geprüft werden. Bitte erneut versuchen.'); return; }
     if (review.conflicts.length && !review.confirmed) { toast.error('Bitte die Terminüberschneidung prüfen und bestätigen.'); return; }
     const payload: AppointmentInput = {
-      type: form.type, title: form.title?.trim() || undefined, notes: form.notes, assigneeId: form.assigneeId,
+      type: form.type, title: form.title?.trim() || undefined, notes: form.notes, assigneeId: form.assigneeId || '', companyId: form.companyId,
       customerName: form.customerName?.trim(), customerEmail: form.customerEmail?.trim(), customerPhone: form.customerPhone?.trim(),
-      durationMinutes: form.durationMinutes, location: form.location?.trim(), meetingLink: form.meetingLink?.trim() ? safeWebsiteUrl(form.meetingLink) : undefined,
+      durationMinutes: form.durationMinutes, location: form.location?.trim(), meetingLink: form.meetingLink?.trim() ? safeWebsiteUrl(form.meetingLink) : '',
       start: `${form.date}T${form.time}`, sendInvite: form.sendInvite,
     };
     saveLock.current = true; setSaving(true);
     try {
       if (!(await review.verify())) { toast.error('Die Verfügbarkeit hat sich geändert. Bitte den Konflikt prüfen.'); return; }
-      if (editingId) {
-        const res = await updateAppointment(editingId, { ...payload, resendInvite: form.sendInvite });
-        if (res.calendarError) toast.warning(`Termin gespeichert, Teams-Synchronisierung ausstehend: ${res.calendarError}`);
-        else if (form.sendInvite && form.customerEmail && !res.inviteSent) toast.warning(`Termin aktualisiert. Einladung nicht versendet: ${res.inviteError || 'Bitte erneut versuchen.'}`);
-        else toast.success(res.calendarSynced ? 'Termin und Teams-Call aktualisiert.' : res.inviteSent ? 'Termin und Einladung aktualisiert.' : 'Termin aktualisiert.');
-        if (res.calendarDecision && !res.calendarDecision.eligible) toast.info('Kein Teams-Termin: Es wurde kein eindeutiger digitaler Kundentermin erkannt.');
-      } else {
-        const res = await createAppointment(payload);
-        if (res.calendarError) toast.warning(`Termin angelegt, Teams-Synchronisierung ausstehend: ${res.calendarError}`);
-        else if (res.inviteSent) toast.success(res.calendarSynced ? 'Termin und Teams-Call angelegt · Einladung verschickt.' : 'Termin angelegt · Einladung an den Kunden verschickt.');
-        else if (form.sendInvite && form.customerEmail) toast.warning(`Termin angelegt, E-Mail nicht versendet: ${res.inviteError || 'unbekannt'}`);
-        else toast.success('Termin angelegt.');
-        if (res.calendarDecision && !res.calendarDecision.eligible) toast.info('Bewusst ohne Teams angelegt: kein eindeutiger digitaler Kundentermin erkannt.');
-      }
+      const res = editingId
+        ? await updateAppointment(editingId, { ...payload, resendInvite: form.sendInvite })
+        : await createAppointment(payload);
+      const failedInvite = res.inviteError || (form.sendInvite && form.customerEmail && !res.inviteSent ? 'Bitte erneut versuchen.' : '');
+      setInviteError(failedInvite);
+      if (failedInvite) {
+        toast.warning('Termin gespeichert. Die Einladung konnte nicht versendet werden.');
+        setDetail(res.appointment);
+      } else toast.success(res.inviteSent ? 'Termin gespeichert · Einladung per E-Mail verschickt.' : 'Termin gespeichert.');
       setCreateOpen(false);
       setFormDirty(false); setFormErrors({});
       setSelectedDay(form.date!);
+      setCursor(new Date(`${form.date}T12:00`));
       await load();
     } catch (e) {
       toast.error((e as Error)?.message || 'Speichern fehlgeschlagen.');
@@ -218,12 +222,20 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
     catch { toast.error('Löschen fehlgeschlagen.'); }
   }
   async function resend(a: Appointment) {
-    try { const r = await updateAppointment(a.id, { resendInvite: true }); toast.success(r.inviteSent ? 'Einladung erneut verschickt.' : 'Konnte nicht senden.'); await load(); }
-    catch { toast.error('Erneutes Senden fehlgeschlagen.'); }
+    if (resendLock.current) return;
+    resendLock.current = true; setResending(true); setInviteError('');
+    try {
+      const r = await updateAppointment(a.id, { resendInvite: true });
+      setDetail(r.appointment);
+      if (r.inviteSent) toast.success('Einladung per E-Mail verschickt.');
+      else { setInviteError(r.inviteError || 'Bitte erneut versuchen.'); toast.error('Einladung konnte nicht versendet werden.'); }
+      await load();
+    } catch { setInviteError('Erneutes Senden fehlgeschlagen. Bitte erneut versuchen.'); toast.error('Erneutes Senden fehlgeschlagen.'); }
+    finally { resendLock.current = false; setResending(false); }
   }
   function copyLink(a: Appointment) {
     if (!a.public_token) return;
-    navigator.clipboard?.writeText(`https://partsunion.de/termin?t=${a.public_token}`).then(() => toast.success('Bestätigungs-Link kopiert.')).catch(() => undefined);
+    navigator.clipboard?.writeText(`https://partsunion.de/termin#t=${encodeURIComponent(a.public_token)}`).then(() => toast.success('Bestätigungs-Link kopiert.')).catch(() => undefined);
   }
   const moveCursor = (direction: number) => {
     const next = new Date(cursor);
@@ -250,6 +262,15 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
           </div>
         }
       />
+
+      {lead && <section aria-label="Termin zum Lead planen" className="flex flex-col gap-3 rounded-md border border-border-subtle bg-surface px-4 py-3 lg:flex-row lg:items-center">
+        <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{lead.company}</p><p className="text-xs text-text-secondary">Kontaktdaten werden übernommen. Wähle einen freien Zeitpunkt im Kalender.</p></div>
+        <div className="flex flex-wrap items-center gap-2">
+        {onOpenLead && <Button variant="ghost" size="sm" onClick={() => onOpenLead(lead.id)}>Zurück zum Lead</Button>}
+        <Button size="sm" onClick={() => openCreate()}><Plus className="size-4" /> Termin für Lead planen</Button>
+        {onClearLead && <Button variant="ghost" size="sm" onClick={onClearLead}>Auswahl aufheben</Button>}
+        </div>
+      </section>}
 
       {!loading && !loadError && <section aria-label="Kalenderlage im sichtbaren Zeitraum" className="crm-calendar-kpis grid grid-cols-2 sm:grid-cols-4">
         {[
@@ -409,7 +430,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
           open={createOpen}
           onClose={closeForm}
           title={editingId ? 'Termin bearbeiten' : 'Neuer Termin'}
-          subtitle="Mit Kunden-E-Mail wird automatisch eine Einladung verschickt."
+          subtitle="Auf Wunsch mit E-Mail-Einladung und Kalenderanhang."
           size="md"
           footer={
             <div className="flex justify-end gap-2">
@@ -460,8 +481,9 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
             </div>
             <Field label="Interne Notizen">
               <textarea rows={2} value={form.notes || ''} placeholder="z. B. Teams-Beratung / vor Ort / telefonischer Rückruf" onChange={(e) => changeForm((f) => ({ ...f, notes: e.target.value }))} className={cn(inputSized, 'h-auto py-2')} />
-              <p className="mt-1 text-xs text-text-muted">Ein vorhandener Teams- oder Videolink wird übernommen. Bei angebundener Kalenderintegration kann für eindeutig digitale Kundentermine automatisch ein Teams-Call erzeugt werden.</p>
+              <p className="mt-1 text-xs text-text-muted">Diese Notizen bleiben im CRM und werden nicht an den Kunden geschickt.</p>
             </Field>
+            <p className="text-xs text-text-secondary">Für einen Teams-Termin den Link der Besprechung oben einfügen. Er wird in E-Mail und Kalenderanhang übernommen. Das CRM erstellt derzeit keine eigene Teams-Besprechung.</p>
             <AppointmentConflictReview review={review} />
             <label className="flex items-center gap-2 rounded-md border border-border-subtle bg-canvas p-2.5 text-sm text-text-secondary">
               <input type="checkbox" checked={!!form.sendInvite} onChange={(e) => changeForm((f) => ({ ...f, sendInvite: e.target.checked }))} className="size-4 accent-accent-500" />
@@ -480,7 +502,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
         return (
           <Modal
             open={!!detail}
-            onClose={() => setDetail(null)}
+            onClose={() => { if (!resending) { setDetail(null); setInviteError(''); } }}
             title={
               <span className="flex items-center gap-2">
                 <span className={cn('rounded border px-1.5 py-0.5 text-[11px]', tm.chip)}>{tm.label}</span>
@@ -500,7 +522,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
                 {detail.status !== 'confirmed' && detail.status !== 'cancelled' && <Button size="sm" onClick={() => setStatus(detail, 'confirmed')}><CalendarCheck className="size-4" /> Bestätigen</Button>}
                 <Button size="sm" variant="outline" onClick={() => openEdit(detail)}><RotateCcw className="size-4" /> Verschieben</Button>
                 {detail.public_token && <Button size="sm" variant="outline" onClick={() => copyLink(detail)}><Link2 className="size-4" /> Link</Button>}
-                {detail.customer_email && detail.status !== 'cancelled' && <Button size="sm" variant="outline" onClick={() => resend(detail)}><Mail className="size-4" /> Erneut einladen</Button>}
+                {detail.customer_email && detail.status !== 'cancelled' && <Button size="sm" variant="outline" disabled={resending} onClick={() => resend(detail)}>{resending ? <Loader2 className="size-4 animate-spin" /> : <Mail className="size-4" />} {resending ? 'Wird versendet …' : detail.invite_sent_at ? 'Erneut einladen' : 'Einladung senden'}</Button>}
                 {detail.status !== 'completed' && detail.status !== 'cancelled' && <Button size="sm" variant="outline" onClick={() => setStatus(detail, 'completed')}><CheckCircle2 className="size-4" /> Erledigt</Button>}
                 {detail.status !== 'no_show' && detail.status !== 'cancelled' && <Button size="sm" variant="outline" onClick={() => setStatus(detail, 'no_show')}><Ban className="size-4" /> No-Show</Button>}
                 {/* Absagen (mit Kundenmail) nur bei Kunden-Terminen; interne Slots: nur Löschen. */}
@@ -515,7 +537,8 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
               {detail.customer_email && <Row icon={<Mail className="size-4" />} text={detail.customer_email} />}
               {detail.customer_phone && <Row icon={<Phone className="size-4" />} text={detail.customer_phone} />}
               {(detail.meeting_link || detail.location) && <Row icon={<MapPin className="size-4" />} text={detail.meeting_link || detail.location || ''} />}
-              {detail.invite_sent_at && <div className="text-xs text-text-muted">Einladung verschickt.</div>}
+              {inviteError && <p role="alert" className="rounded-md bg-status-danger/10 p-3 text-sm text-status-danger">Termin gespeichert, Einladung nicht versendet: {inviteError} Über „Einladung senden“ kannst du es erneut versuchen.</p>}
+              {detail.invite_sent_at && <div className="text-xs text-text-muted">Zuletzt per E-Mail verschickt: {new Date(detail.invite_sent_at).toLocaleString('de-DE', { timeZone: 'Europe/Berlin' })}.</div>}
               {detail.notes && <div className="rounded-md border border-border-subtle bg-canvas p-2.5 text-sm text-text-muted">{detail.notes}</div>}
             </div>
           </Modal>

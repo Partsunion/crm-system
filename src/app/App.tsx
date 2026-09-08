@@ -3,7 +3,7 @@ import { WORKSPACE_FRAME } from './components/layout/workspaceShell';
 import { Login } from './components/Login';
 import { Sidebar, VIEW_LABELS, type ViewId } from './components/layout/Sidebar';
 import { Topbar } from './components/layout/Topbar';
-import { logout, getCurrentUser, validateSession, syncSettingsFromServer } from './utils/storage';
+import { logout, getCurrentUser, validateSession, syncSettingsFromServer, type Lead } from './utils/storage';
 import { AccountSecurity } from './components/AccountSecurity';
 import { AccountRecovery } from './components/AccountRecovery';
 import { VIEW_PATHS, viewFromPath } from './utils/navigation';
@@ -54,8 +54,10 @@ export default function App() {
   const historyIndex = useRef<number>(typeof window.history.state?.crmIndex === 'number' ? window.history.state.crmIndex : 0);
   const acceptedUrl = useRef(window.location.pathname + window.location.search + window.location.hash);
   const restoringHistory = useRef(false);
+  const [calendarLead, setCalendarLead] = useState<Lead | null>(null);
   const setActiveView = useCallback((view: ViewId): boolean => {
     if (!mayLeaveWorkspace()) return false;
+    setCalendarLead(null);
     const path = VIEW_PATHS[view];
     if (acceptedUrl.current !== path) window.history.pushState({ crmIndex: ++historyIndex.current }, '', path);
     acceptedUrl.current = path;
@@ -148,6 +150,10 @@ export default function App() {
   }, [setActiveView]);
 
   // ⌘K / Ctrl+K → Command Palette
+  const openCalendar = useCallback((lead: Lead) => {
+    if (setActiveView('kalender')) setCalendarLead(lead);
+  }, [setActiveView]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -215,6 +221,7 @@ export default function App() {
               {activeView === 'leads' && (
                 <LeadsView
                   pendingAction={pendingLeadAction}
+                  onOpenCalendar={openCalendar}
                   pendingWorkView={pendingWorkView}
                   onWorkViewHandled={() => setPendingWorkView(null)}
                   onPendingHandled={() => setPendingLeadAction(null)}
@@ -222,10 +229,10 @@ export default function App() {
                   onPendingLeadHandled={() => setPendingLeadId(null)}
                 />
               )}
-              {activeView === 'pipeline' && <PipelineView />}
+              {activeView === 'pipeline' && <PipelineView onOpenCalendar={openCalendar} />}
               {activeView === 'scraper' && <ScraperView />}
               {activeView === 'reports' && <ReportsView />}
-              {activeView === 'kalender' && <KalenderView onOpenLead={openLead} />}
+              {activeView === 'kalender' && <KalenderView onOpenLead={openLead} lead={calendarLead} onClearLead={() => setCalendarLead(null)} />}
               {activeView === 'settings' && <Settings />}
               {activeView === 'security' && <AccountSecurity onPasswordChanged={() => { setLoggedIn(false); setActiveView('dashboard'); }} />}
               {activeView === 'users' && <UserManagement />}

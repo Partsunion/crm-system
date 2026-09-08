@@ -20,7 +20,7 @@ import { mayLeaveWorkspace } from '../utils/useWorkspaceGuard';
 
 const EUR = (n: number) => '€' + (n || 0).toLocaleString('de-DE');
 
-export function PipelineView() {
+export function PipelineView({ onOpenCalendar }: { onOpenCalendar?: (lead: Lead) => void } = {}) {
   const [loadError, setLoadError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -275,6 +275,7 @@ export function PipelineView() {
 
       {detailLead && (
         <LeadDetailModal
+          onOpenCalendar={onOpenCalendar}
           key={detailLead.id}
           lead={detailLead}
           onClose={() => setDetailLead(null)}

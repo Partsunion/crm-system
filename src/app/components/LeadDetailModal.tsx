@@ -53,6 +53,8 @@ interface LeadDetailModalProps {
   onClose: () => void;
   onEdit: (lead: Lead) => void;
   onDelete: () => void;
+  /** Navigation callback handles the workspace's unsaved-change guard. */
+  onOpenCalendar?: (lead: Lead) => void;
   /** Wird nach Statuswechsel/Entscheider-Update aufgerufen, damit Liste/Pipeline neu lädt. */
   onLeadChanged?: () => void;
   /**
@@ -194,7 +196,7 @@ function initials(name: string): string {
   return (name || '?').split(/\s+/).map((s) => s[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || '?';
 }
 
-export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged, variant = 'modal', navigation }: LeadDetailModalProps) {
+export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged, onOpenCalendar, variant = 'modal', navigation }: LeadDetailModalProps) {
   const currentUser = getCurrentUser();
   const phone = usePhone();
   const hasCallNote = phone?.opened && phone.call?.leadId === lead.id && phone.call?.userId === currentUser?.id;
@@ -428,8 +430,8 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
         )}
       </div>
 
-          {(lead.phone || lead.email) && (
-            <div className="flex gap-2">
+          {(lead.phone || lead.email || onOpenCalendar) && (
+            <div className="flex flex-wrap gap-2">
               {lead.phone && (
                 <CallButton lead={lead} />
               )}
@@ -438,6 +440,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
                   <Mail className="size-4" />E-Mail
                 </a>
               )}
+              {onOpenCalendar && <Button variant="secondary" size="sm" onClick={() => onOpenCalendar(lead)}><Calendar className="size-4" /> Zum Kalender</Button>}
             </div>
           )}
 
