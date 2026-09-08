@@ -1,8 +1,8 @@
 /** Internal workspace shell v3. Geometry stays identical in Admin and CRM. */
 export const WORKSPACE_FRAME = 'flex h-screen h-dvh w-full overflow-hidden bg-canvas text-text-primary';
 export const WORKSPACE_HEADER = 'flex h-[60px] shrink-0 items-center gap-2 border-b border-border bg-surface/95 px-3 backdrop-blur-xl md:px-5';
-export const WORKSPACE_BRAND = 'flex h-[60px] shrink-0 items-center gap-3 border-b border-white/[0.08] px-4';
-export const WORKSPACE_MARK = 'flex size-8 shrink-0 items-center justify-center rounded-[7px] bg-accent-600 ring-1 ring-inset ring-white/15';
+export const WORKSPACE_BRAND = 'flex h-[60px] shrink-0 items-center gap-3 border-b border-overlay/[0.08] px-4';
+export const WORKSPACE_MARK = 'flex size-8 shrink-0 items-center justify-center rounded-[7px] bg-accent-600 ring-1 ring-inset ring-overlay/15';
 export const WORKSPACE_NAV_ITEM = 'group relative mx-3 flex min-h-10 items-center rounded-md py-2 text-[13px] font-semibold transition-[background-color,color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500';
 export const WORKSPACE_NAV_ACTIVE = 'bg-accent-500/[0.12] text-text-primary shadow-[inset_0_0_0_1px_rgb(255_255_255_/_0.04)] before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:bg-accent-500';
 export const WORKSPACE_SEARCH = 'inline-flex h-9 min-w-0 shrink-0 items-center gap-2 rounded-md border border-border bg-canvas/55 px-3 text-sm text-text-secondary transition-[border-color,background-color,box-shadow] hover:border-border-strong hover:bg-elevated/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 lg:w-[272px]';

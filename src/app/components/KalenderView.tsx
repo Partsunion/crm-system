@@ -6,6 +6,7 @@
  * Bestätigungs-Link) → bestätigt selbst → Status springt auf „Bestätigt".
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useWorkspacePreference } from '../utils/useWorkspacePreference';
 import { useAppointmentConflicts } from '../utils/useAppointmentConflicts';
 import { validateAppointmentDraft } from '../utils/appointmentForm';
 import { safeWebsiteUrl } from '../utils/safeUrl';
@@ -69,7 +70,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [admins, setAdmins] = useState<AppointmentAdmin[]>([]);
   const [loading, setLoading] = useState(true);
-  const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
+  const [assigneeFilter, setAssigneeFilter] = useWorkspacePreference<string>('calendar.owner', 'all');
   const [selectedDay, setSelectedDay] = useState<string>(() => toKey(new Date()));
   const [createOpen, setCreateOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -79,10 +80,10 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
   const saveLock = useRef(false);
   const [saving, setSaving] = useState(false);
   const [detail, setDetail] = useState<Appointment | null>(null);
-  const [mode, setMode] = useState<CalendarMode>('week');
+  const [mode, setMode] = useWorkspacePreference<CalendarMode>('calendar.mode', 'week', ['day','week','month','agenda']);
   const [teams, setTeams] = useState<CrmTeam[]>([]);
-  const [teamFilter, setTeamFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('active');
+  const [teamFilter, setTeamFilter] = useWorkspacePreference<string>('calendar.team', 'all');
+  const [statusFilter, setStatusFilter] = useWorkspacePreference<string>('calendar.status', 'active');
   const review = useAppointmentConflicts(createOpen, `${form.date || ''}T${form.time || ''}`, form.durationMinutes || 30, form.assigneeId, editingId || undefined);
   const [loadError, setLoadError] = useState(false);
   useWorkspaceGuard(createOpen && formDirty, saving);
@@ -245,7 +246,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
               {admins.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
             <select aria-label="Kalender nach Status filtern" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={cn(inputSized, 'w-full sm:w-[170px]')}><option value="active">Aktive Termine</option><option value="all">Alle Status</option><option value="proposed">Vorgeschlagen</option><option value="confirmed">Bestätigt</option><option value="completed">Erledigt</option><option value="no_show">Nicht erschienen</option><option value="cancelled">Abgesagt</option></select>
-            <Button onClick={() => openCreate()}><Plus className="size-4" /> Neuer Termin</Button>
+            <Button variant="ghost" size="sm" onClick={()=>{setAssigneeFilter('all');setTeamFilter('all');setStatusFilter('active');}}>Filter zurücksetzen</Button><Button onClick={() => openCreate()}><Plus className="size-4" /> Neuer Termin</Button>
           </div>
         }
       />
@@ -260,7 +261,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
       </section>}
 
       {loadError && <LoadError message="Termine konnten nicht geladen werden." onRetry={() => void load()} />}
-      <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex rounded-md border border-border-subtle bg-surface p-1">{([{ id: 'day', label: 'Tag' }, { id: 'week', label: 'Woche' }, { id: 'month', label: 'Monat' }, { id: 'agenda', label: 'Agenda' }] as const).map((item) => <button key={item.id} aria-pressed={mode === item.id} onClick={() => setMode(item.id)} className={`rounded px-4 py-1.5 text-sm ${mode === item.id ? 'bg-elevated font-medium' : 'text-text-secondary'}`}>{item.label}</button>)}</div><p className="text-sm text-text-muted">Meeting-Links können hinterlegt werden. Microsoft-365-Synchronisierung ist nicht eingerichtet.</p></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex rounded-md border border-border-subtle bg-surface p-1">{([{ id: 'day', label: 'Tag' }, { id: 'week', label: 'Woche' }, { id: 'month', label: 'Monat' }, { id: 'agenda', label: 'Agenda' }] as const).map((item) => <button key={item.id} aria-pressed={mode === item.id} onClick={() => setMode(item.id)} className={`rounded px-4 py-1.5 text-sm ${mode === item.id ? 'bg-elevated font-medium' : 'text-text-secondary'}`}>{item.label}</button>)}</div><p className="text-xs text-text-muted">Termin öffnen, um Details und nächste Schritte zu bearbeiten.</p></div>
       <div className={cn("grid grid-cols-1 gap-5", mode === "month" && "xl:grid-cols-[minmax(0,1fr)_340px]")}>
         {/* Gitter */}
         <Card className="crm-calendar-surface overflow-auto">

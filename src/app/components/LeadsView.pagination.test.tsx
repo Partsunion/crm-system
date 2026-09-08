@@ -7,7 +7,7 @@ vi.mock('../utils/storage', () => ({
   getLeads: async () => leads, getLeadLists: async () => [], getAppointmentAdmins: async () => [], getStatusOptions: () => ['Neu'],
   getCurrentUser: () => ({ id: 'pagination-test' }), getSettings: () => ({ pipelineStages: [] }),
 }));
-beforeEach(() => { localStorage.clear(); vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })); });
+beforeEach(() => { localStorage.clear(); sessionStorage.clear(); vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it('renders only one page and preserves explicit selection across page navigation', async () => {
   const { container } = render(<LeadsView />);

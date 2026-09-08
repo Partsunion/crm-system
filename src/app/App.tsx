@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { vergessen } from './utils/zwischenspeicher';
 import { ansichtenVorwaermen } from './vorwaermen';
 import { PhoneProvider } from './phone/PhoneProvider';
+import type { LeadWorkRequest } from './components/LeadsView';
 
 /**
  * Die Befehlspalette oeffnet erst auf ⌘K. Sie eager zu laden hiess: die
@@ -63,6 +64,7 @@ export default function App() {
   }, []);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingLeadAction, setPendingLeadAction] = useState<LeadAction>(null);
+  const [pendingWorkView, setPendingWorkView] = useState<LeadWorkRequest | null>(null);
   // Lead, der beim Wechsel auf die Leads-Ansicht direkt geöffnet werden soll
   // (Sprung aus Kalender/Tagesplan in die Lead-Maske).
   const [pendingLeadId, setPendingLeadId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('lead'));
@@ -122,7 +124,7 @@ export default function App() {
   useEffect(() => {
     if (!loggedIn) return;
     void syncSettingsFromServer().then((changed) => { if (changed) setRefreshTick((t) => t + 1); });
-    ansichtenVorwaermen();
+    return ansichtenVorwaermen();
   }, [loggedIn]);
 
   const handleRefresh = useCallback(async () => {
@@ -209,10 +211,12 @@ export default function App() {
                 </div>
               }
             >
-              {activeView === 'dashboard' && <Dashboard onOpenKalender={() => setActiveView('kalender')} onOpenLead={openLead} onOpenLeads={() => setActiveView('leads')} />}
+              {activeView === 'dashboard' && <Dashboard onOpenKalender={() => setActiveView('kalender')} onOpenLead={openLead} onOpenLeads={(preset = 'all', options) => { if (setActiveView('leads')) setPendingWorkView({view:preset,...options}); }} />}
               {activeView === 'leads' && (
                 <LeadsView
                   pendingAction={pendingLeadAction}
+                  pendingWorkView={pendingWorkView}
+                  onWorkViewHandled={() => setPendingWorkView(null)}
                   onPendingHandled={() => setPendingLeadAction(null)}
                   pendingLeadId={pendingLeadId}
                   onPendingLeadHandled={() => setPendingLeadId(null)}
@@ -235,13 +239,13 @@ export default function App() {
           sehen sein — ein Ladehinweis mitten auf dem Bildschirm waere
           stoerender als die Palette einen Wimpernschlag spaeter. */}
       <Suspense fallback={null}>
-      <CommandPalette
+      {paletteOpen && <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         onNavigate={setActiveView}
         onNewLead={() => triggerLeadAction('new')}
         onImport={() => triggerLeadAction('import')}
-      />
+      />}
       </Suspense>
     </div>
     </PhoneProvider>

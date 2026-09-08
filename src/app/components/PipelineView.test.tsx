@@ -6,6 +6,7 @@ import { PipelineView } from './PipelineView';
 const api = vi.hoisted(() => ({ leads: vi.fn(), save: vi.fn() }));
 vi.mock('../utils/storage', () => ({
   getLeads: api.leads, saveLead: api.save, deleteLead: vi.fn(),
+  getCurrentUser: () => ({ id: 'pipeline-test', username: 'Aaron' }),
   getSettings: () => ({ pipelineStages: [
     { id: 'new', name: 'Neu', category: 'open', color: '#194bf0', isActive: true, order: 0, probability: 20 },
     { id: 'qualified', name: 'Qualifiziert', category: 'open', color: '#067640', isActive: true, order: 1 },
@@ -17,7 +18,7 @@ const leads = ['Nord', 'Süd'].map((company, index) => ({ id: String(index), com
 
 describe('Pipeline interactions', () => {
   afterEach(cleanup);
-  beforeEach(() => { vi.clearAllMocks(); api.leads.mockResolvedValue(leads); });
+  beforeEach(() => { sessionStorage.clear(); vi.clearAllMocks(); api.leads.mockResolvedValue(leads); });
   it('keeps the old phase until the server confirms and disables competing moves', async () => {
     let finish!: () => void;
     api.save.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
@@ -44,6 +45,14 @@ describe('Pipeline interactions', () => {
     render(<PipelineView />);
     expect(screen.getByText('Pipeline wird geladen…')).toBeInTheDocument();
     expect(screen.queryByText('Noch keine aktiven Phasen')).not.toBeInTheDocument();
+  });
+  it('keeps large board columns bounded without hiding their remaining leads', async () => {
+    api.leads.mockResolvedValue(Array.from({length:80}, (_,i)=>({...leads[0],id:String(i),company:`Firma ${i}`})));
+    render(<PipelineView />);
+    const region = await screen.findByRole('region', {name:'Neu'});
+    await waitFor(()=>expect(within(region).getAllByRole('combobox')).toHaveLength(25));
+    fireEvent.click(within(region).getByRole('button', {name:/25 weitere Leads anzeigen/}));
+    expect(within(region).getAllByRole('combobox')).toHaveLength(50);
   });
   it('exposes old open opportunities as a concrete work queue with a transparent plan value', async () => {
     render(<PipelineView />);

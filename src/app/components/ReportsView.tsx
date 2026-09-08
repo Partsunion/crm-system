@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
-import { TrendingUp, Trophy, Target, Percent, Award } from 'lucide-react';
+import { useWorkspacePreference } from '../utils/useWorkspacePreference';
+import { localDayKey } from '../utils/leadQuality';
+import { TrendingUp } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, AreaChart, Area, XAxis, YAxis,
   CartesianGrid, RadialBarChart, RadialBar, PolarAngleAxis,
@@ -7,15 +9,22 @@ import {
 import { LoadError } from './LoadError';
 import { leadCategory, stageCategory } from '../utils/stages';
 import { getLeads, getSettings, type Lead } from '../utils/storage';
-import { Card, EmptyState, PageHeader, SEITEN_RAND, SectionLabel, StatCard, statusColor, inputClass, Button } from './ui-kit';
-import { Reveal, Item, AnimatedNumber } from './anim';
+import { Card, EmptyState, PageHeader, SEITEN_RAND, SectionLabel, statusColor, inputClass, Button } from './ui-kit';
+import { AnimatedNumber } from './anim';
 import { cn } from './ui/utils';
 
 const EUR0 = (n: number) => '€' + Math.round(n || 0).toLocaleString('de-DE');
 const SOURCE_PALETTE = ['#1D6FE8', '#00C875', '#FDAB3D', '#A25DDC', '#FF642E', '#66CCFF', '#E2445C', '#9AADBD'];
 
 function useChartTheme() {
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    const observer = new MutationObserver(() => setRevision(value=>value+1));
+    observer.observe(document.documentElement, {attributes:true, attributeFilter:['class','data-theme']});
+    return () => observer.disconnect();
+  }, []);
   return useMemo(() => {
+    void revision; // Refresh CSS token values when the user switches themes.
     const fb = { axis: '#9AA3AD', grid: '#252A31', elevated: '#1A1E24', primary: '#E8ECF1', accent: '#1D6FE8' };
     if (typeof document === 'undefined') return fb;
     const cs = getComputedStyle(document.documentElement);
@@ -27,7 +36,7 @@ function useChartTheme() {
       primary: v('--text-primary', fb.primary),
       accent: v('--accent-500', fb.accent),
     };
-  }, []);
+  }, [revision]);
 }
 
 export function ReportsView() {
@@ -35,10 +44,10 @@ export function ReportsView() {
   const [loading, setLoading] = useState(true);
   const [loadTick, setLoadTick] = useState(0);
   const [allLeads, setLeads] = useState<Lead[]>([]);
-  const [source, setSource] = useState('all');
-  const [owner, setOwner] = useState('all');
-  const [createdFrom, setCreatedFrom] = useState('');
-  const [createdTo, setCreatedTo] = useState('');
+  const [source, setSource] = useWorkspacePreference<string>('reports.source', 'all');
+  const [owner, setOwner] = useWorkspacePreference<string>('reports.owner', 'all');
+  const [createdFrom, setCreatedFrom] = useWorkspacePreference<string>('reports.createdFrom', '');
+  const [createdTo, setCreatedTo] = useWorkspacePreference<string>('reports.createdTo', '');
   const leads = useMemo(() => allLeads.filter((lead) => (source === 'all' || lead.source === source)
     && (owner === 'all' || lead.assignedTo === owner) && (!createdFrom || lead.createdAt.slice(0, 10) >= createdFrom)
     && (!createdTo || lead.createdAt.slice(0, 10) <= createdTo)), [allLeads, source, owner, createdFrom, createdTo]);
@@ -122,6 +131,9 @@ export function ReportsView() {
     fontSize: '12px',
   };
 
+  if (loadError) return <div className={SEITEN_RAND}><PageHeader title="Berichte" subtitle="Aktueller Lead-Bestand" /><LoadError message="Berichte konnten nicht geladen werden." onRetry={() => setLoadTick((tick) => tick + 1)} /></div>;
+  if (loading) return <p role="status" className={SEITEN_RAND}>Berichte werden geladen…</p>;
+
   if (allLeads.length === 0) {
     return (
       <div className={cn(SEITEN_RAND, 'space-y-6')}>
@@ -133,22 +145,20 @@ export function ReportsView() {
     );
   }
 
-  if (loadError) return <div className={SEITEN_RAND}><PageHeader title="Berichte" subtitle="Aktueller Lead-Bestand" /><LoadError message="Berichte konnten nicht geladen werden." onRetry={() => setLoadTick((tick) => tick + 1)} /></div>;
-  if (loading) return <p role="status" className={SEITEN_RAND}>Berichte werden geladen…</p>;
   return (
     <div className={cn(SEITEN_RAND, 'space-y-6')}>
       <PageHeader title="Berichte" subtitle="Auswertungen über Ihre Vertriebs-Pipeline." />
       <Card className="p-4"><div className="flex flex-wrap items-end gap-3"><label className="text-sm text-text-secondary">Quelle<select className={inputClass} value={source} onChange={(e) => setSource(e.target.value)}><option value="all">Alle Quellen</option>{[...new Set(allLeads.map((lead) => lead.source).filter(Boolean))].sort().map((item) => <option key={item}>{item}</option>)}</select></label><label className="text-sm text-text-secondary">Zuständigkeit<select className={inputClass} value={owner} onChange={(e) => setOwner(e.target.value)}><option value="all">Gesamtes Team</option>{[...new Set(allLeads.map((lead) => lead.assignedTo).filter(Boolean))].sort().map((item) => <option key={item}>{item}</option>)}</select></label><label className="text-sm text-text-secondary">Erstellt ab<input className={inputClass} type="date" value={createdFrom} onChange={(e) => setCreatedFrom(e.target.value)} /></label><label className="text-sm text-text-secondary">Erstellt bis<input className={inputClass} type="date" value={createdTo} onChange={(e) => setCreatedTo(e.target.value)} /></label><Button variant="ghost" onClick={() => { setSource('all'); setOwner('all'); setCreatedFrom(''); setCreatedTo(''); }}>Zurücksetzen</Button><span className="ml-auto text-sm text-text-muted">{total} Leads in dieser Auswertung</span></div></Card>
       <p className="text-sm text-text-secondary">Bestandsauswertung nach Erstellungsdatum. Werte sind gepflegte Verkaufschancen, kein gebuchter Umsatz. Phasenanteile bilden keine historische Conversion ab.</p>
 
+      <div className="flex flex-wrap gap-2" aria-label="Berichtszeitraum"><Button size="sm" variant="ghost" onClick={()=>{const now=new Date();setCreatedFrom(localDayKey(new Date(now.getFullYear(),now.getMonth(),1)));setCreatedTo(localDayKey(now));}}>Dieser Monat</Button><Button size="sm" variant="ghost" onClick={()=>{const now=new Date();setCreatedFrom(localDayKey(new Date(now.getFullYear(),now.getMonth()-1,1)));setCreatedTo(localDayKey(new Date(now.getFullYear(),now.getMonth(),0)));}}>Letzter Monat</Button><Button size="sm" variant="ghost" onClick={()=>{setCreatedFrom(new Date().getFullYear()+'-01-01');setCreatedTo(localDayKey(new Date()));}}>Dieses Jahr</Button></div>
       {/* KPIs */}
-      <Reveal className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Item><StatCard icon={<Trophy className="size-4" />} label="Gewonnener Wert" value={<AnimatedNumber value={wonValue} format={EUR0} />} hint={`${won.length} Abschlüsse`} /></Item>
-        <Item><StatCard icon={<Percent className="size-4" />} label="Win-Rate" value={<AnimatedNumber value={winRate} format={(n) => Math.round(n) + '%'} />} hint={`${won.length} gewonnen · ${lost.length} verloren`} /></Item>
-        <Item><StatCard icon={<Award className="size-4" />} label="Ø Abschluss" value={<AnimatedNumber value={avgDeal} format={EUR0} />} /></Item>
-        <Item><StatCard icon={<Target className="size-4" />} label="Anteil gewonnen" value={<AnimatedNumber value={conversion} format={(n) => Math.round(n) + '%'} />} hint={`von ${total} Leads`} /></Item>
-      </Reveal>
-
+      <section className="crm-report-facts" aria-label="Vertriebsauswertung">
+        <div><span>Gewonnener Wert</span><strong>{EUR0(wonValue)}</strong><small>{won.length} Abschlüsse</small></div>
+        <div><span>Abschlussquote</span><strong>{winRate}%</strong><small>{won.length} gewonnen · {lost.length} verloren</small></div>
+        <div><span>Ø Abschluss</span><strong>{EUR0(avgDeal)}</strong></div>
+        <div><span>Anteil gewonnen</span><strong>{conversion}%</strong><small>von {total} Leads</small></div>
+      </section>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Funnel */}
         <Card className="p-4 lg:col-span-2">

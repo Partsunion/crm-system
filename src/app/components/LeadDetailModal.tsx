@@ -24,6 +24,8 @@ import {
   Modal, Button, IconButton, Badge, StatusBadge, PriorityPill, EmptyState, SectionLabel, inputClass, cn,
 } from './ui-kit';
 import { CustomSelect } from './CustomSelect';
+import { mayLeaveWorkspace, useWorkspaceGuard } from '../utils/useWorkspaceGuard';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 const ADMIN_DASHBOARD_URL = (
   (import.meta.env as Record<string, string | undefined>).VITE_ADMIN_DASHBOARD_URL || 'https://admin.partsunion.de'
@@ -59,6 +61,7 @@ interface LeadDetailModalProps {
    * bedienbar, Zeilenklick wechselt den Lead im Panel (Remount via key).
    */
   variant?: 'modal' | 'panel';
+  navigation?: { index: number; total: number; previous?: () => void; next?: () => void };
 }
 
 /** Gemeinsame Hülle: Overlay-Modal ODER gedocktes Seitenpanel. */
@@ -191,12 +194,12 @@ function initials(name: string): string {
   return (name || '?').split(/\s+/).map((s) => s[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || '?';
 }
 
-export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged, variant = 'modal' }: LeadDetailModalProps) {
+export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged, variant = 'modal', navigation }: LeadDetailModalProps) {
   const currentUser = getCurrentUser();
   const phone = usePhone();
   const hasCallNote = phone?.opened && phone.call?.leadId === lead.id && phone.call?.userId === currentUser?.id;
   const currentName = currentUser?.username || currentUser?.name || '';
-  const isAdmin = ['admin', 'Admin', 'superadmin'].includes(String(currentUser?.role || ''));
+  const isAdmin = currentUser?.role === 'manager' || Boolean(currentUser?.app_access?.admin);
 
   // Lokale Spiegel: aktualisieren sich sofort nach einer Aktivität (vor Parent-Reload).
   const [status, setStatus] = useState(lead.status);
@@ -235,6 +238,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
   const [planAssignee, setPlanAssignee] = useState('');
   const [planNote, setPlanNote] = useState('');
   const planReview = useAppointmentConflicts(planOpen, `${planDate}T${planTime}`, planDuration, planAssignee);
+  useWorkspaceGuard(Boolean(note.trim() || dmInput.trim() || reached !== null || moveTo !== status || editingId || planOpen), saving || planSaving || brochureSending);
 
   const reload = useCallback(async () => {
     setLoading(true); setActivityError(false);
@@ -379,21 +383,26 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
   return (
     <Shell
       variant={variant}
-      onClose={onClose}
+      onClose={() => { if (mayLeaveWorkspace()) onClose(); }}
       title={lead.company}
       subtitle={lead.contactPerson}
       headerAccessory={
-        <Button variant="secondary" size="sm" onClick={() => onEdit(lead)}>
+        <Button variant="secondary" size="sm" onClick={() => { if (mayLeaveWorkspace()) onEdit(lead); }}>
           <Edit className="size-4" />
           <span className="hidden sm:inline">Stammdaten</span>
         </Button>
       }
       footer={
-        <div className="flex w-full items-center justify-between gap-2">
-          <Button variant="ghost" onClick={onDelete}>
+        <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          <Button variant="ghost" size="sm" onClick={() => { if (mayLeaveWorkspace()) onDelete(); }}>
             <Trash2 className="size-4" />
             Löschen
           </Button>
+          {navigation && <div className="ml-auto flex items-center gap-2" aria-label="Leads durchgehen">
+            <span className="text-xs tabular-nums text-text-muted">{navigation.index >= 0 ? (navigation.index + 1) + ' / ' + navigation.total : 'Außerhalb des Filters'}</span>
+            <IconButton aria-label="Vorheriger Lead" disabled={!navigation.previous || saving || planSaving} onClick={navigation.previous}><ChevronLeft className="size-4"/></IconButton>
+            <Button variant="secondary" size="sm" disabled={!navigation.next || saving || planSaving} onClick={navigation.next}>Nächster Lead<ChevronRight className="size-4"/></Button>
+          </div>}
           {currentUser?.app_access?.admin && leadCategory({ status }) === 'won' && (
             <button
               onClick={() => window.open(buildOnboardingHandoffUrl(lead), '_blank', 'noopener')}

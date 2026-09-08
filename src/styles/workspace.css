@@ -19,9 +19,7 @@ main fieldset { min-width: 0; }
 main table th { font-size: 12px; font-weight: 650; letter-spacing: 0.01em; }
 main table td { font-size: 14px; }
 
-@media (max-width: 1535px) {
-  .crm-lead-table[data-compact="false"] :is(th, td):is(:nth-child(3), :nth-child(7), :nth-child(9)) { display: none; }
-}
+/* Optional lead columns are chosen explicitly; core columns remain visible. */
 
 /* Cards regain their depth. theme.css owns the actual light/dark values. */
 .karte,

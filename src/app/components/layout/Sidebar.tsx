@@ -11,7 +11,6 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Clock,
   LayoutDashboard,
   Users,
   Workflow,
@@ -27,9 +26,8 @@ import {
   PinOff,
   type LucideIcon,
 } from 'lucide-react';
-import { getLeads } from '../../utils/storage';
 import { cn } from '../ui/utils';
-import { berichteVorwaermen } from '../../vorwaermen';
+import { ansichtVorwaermen } from '../../vorwaermen';
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from '../ui/sheet';
 import { WORKSPACE_BRAND, WORKSPACE_MARK, WORKSPACE_NAV_ITEM, WORKSPACE_NAV_ACTIVE } from './workspaceShell';
 
@@ -55,11 +53,11 @@ interface NavItem {
 type NavTone = 'accent' | 'info' | 'success' | 'warning' | 'danger';
 
 const NAV_TONES: Record<NavTone, string> = {
-  accent: 'bg-white/[0.045] text-blue-300',
-  info: 'bg-white/[0.045] text-sky-300',
-  success: 'bg-white/[0.045] text-emerald-300',
-  warning: 'bg-white/[0.045] text-amber-300',
-  danger: 'bg-white/[0.045] text-rose-300',
+  accent: 'bg-overlay/[0.045] text-blue-300',
+  info: 'bg-overlay/[0.045] text-sky-300',
+  success: 'bg-overlay/[0.045] text-emerald-300',
+  warning: 'bg-overlay/[0.045] text-amber-300',
+  danger: 'bg-overlay/[0.045] text-rose-300',
 };
 
 interface NavSection {
@@ -75,10 +73,10 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { view: 'dashboard', label: 'Arbeitsübersicht', icon: LayoutDashboard, tone: 'accent' },
       { view: 'leads', label: 'Leads', icon: Users, tone: 'info' },
+      { view: 'kalender', label: 'Kalender', icon: Calendar, tone: 'warning' },
       { view: 'pipeline', label: 'Pipeline', icon: Workflow, tone: 'success' },
       { view: 'scraper', label: 'Lead-Quellen', icon: Radar, tone: 'warning' },
       { view: 'reports', label: 'Berichte', icon: BarChart3, tone: 'accent' },
-      { view: 'kalender', label: 'Kalender', icon: Calendar, tone: 'warning' },
     ],
   },
   {
@@ -225,7 +223,6 @@ export function Sidebar({ activeView, onNavigate, mobileOpen, onMobileOpenChange
             onToggle={toggleCollapsed}
             angeheftet={angeheftet}
             onToggleAngeheftet={toggleAngeheftet}
-            onNavigate={handleNavigate}
           />
         </aside>
         {collapsed && hovering && (
@@ -243,7 +240,6 @@ export function Sidebar({ activeView, onNavigate, mobileOpen, onMobileOpenChange
               onToggle={toggleCollapsed}
               angeheftet={angeheftet}
               onToggleAngeheftet={toggleAngeheftet}
-              onNavigate={handleNavigate}
             />
           </aside>
         )}
@@ -349,8 +345,8 @@ function Nav({
                     // App.tsx). Zwischen Ueberfahren und Klicken liegen ein
                     // paar hundert Millisekunden; die reichen fuer den
                     // groessten Teil des Downloads.
-                    onMouseEnter={item.view === 'reports' ? berichteVorwaermen : undefined}
-                    onFocus={item.view === 'reports' ? berichteVorwaermen : undefined}
+                    onMouseEnter={() => ansichtVorwaermen(item.view)}
+                    onFocus={() => ansichtVorwaermen(item.view)}
                     title={collapsed ? item.label : undefined}
                     aria-label={collapsed ? item.label : undefined}
                     aria-current={isActive ? 'page' : undefined}
@@ -365,7 +361,7 @@ function Nav({
                         // durchscheinend, und im Hellmodus wäre weisse Schrift
                         // darauf unsichtbar. Im Admin am Bild nachgemessen.
                         ? WORKSPACE_NAV_ACTIVE
-                        : 'text-text-tertiary hover:bg-white/[0.055] hover:text-text-primary',
+                        : 'text-text-tertiary hover:bg-overlay/[0.055] hover:text-text-primary',
                     )}
                   >
                     {isActive && (
@@ -377,7 +373,7 @@ function Nav({
                     <span
                       className={cn(
                         'flex size-7 shrink-0 items-center justify-center rounded-md transition-[background-color,color] duration-150',
-                        isActive ? 'bg-white/[0.10] text-white' : NAV_TONES[item.tone],
+                        isActive ? 'bg-overlay/[0.10] text-text-primary' : NAV_TONES[item.tone],
                       )}
                     >
                       <Icon size={15} aria-hidden />
@@ -394,71 +390,19 @@ function Nav({
   );
 }
 
-/**
- * Fälliges-Feld nach dem Entwurf.
- *
- * Im Entwurf stand dort fest "11 Follow-ups fällig". Eine Zahl, die niemand
- * berechnet, ist im Betrieb schlimmer als keine — man verlässt sich darauf.
- * Hier kommt sie aus den Leads: alle mit `nextFollowUpDate` bis heute.
- *
- * Sind keine fällig, verschwindet das Feld. Ein bernsteinfarbener Kasten mit
- * "0 fällig" ist ein Alarm ohne Anlass; er stumpft ab, und beim nächsten Mal
- * sieht man den echten nicht.
- */
-function FaelligFeld({ onNavigate }: { onNavigate: (v: ViewId) => void }) {
-  const [faellig, setFaellig] = useState<number | null>(null);
-
-  useEffect(() => {
-    let abgebrochen = false;
-    void getLeads()
-      .then((leads) => {
-        if (abgebrochen) return;
-        const heute = new Date();
-        heute.setHours(23, 59, 59, 999);
-        const n = (Array.isArray(leads) ? leads : []).filter((l) => {
-          if (!l.nextFollowUpDate) return false;
-          const d = new Date(l.nextFollowUpDate);
-          return !Number.isNaN(d.getTime()) && d <= heute;
-        }).length;
-        setFaellig(n);
-      })
-      // Kein Feld ist besser als eine falsche Zahl.
-      .catch(() => { if (!abgebrochen) setFaellig(null); });
-    return () => { abgebrochen = true; };
-  }, []);
-
-  if (!faellig) return null;
-
-  return (
-    <button
-      type="button"
-      onClick={() => onNavigate('leads')}
-      className="mb-2.5 flex w-full items-center gap-2.5 rounded-[11px] border border-warning/[0.16] bg-warning/[0.06] px-3 py-2.5 text-left transition-colors hover:border-warning/30"
-    >
-      <Clock size={15} className="shrink-0 text-warning" aria-hidden />
-      <span className="flex-1 text-[11px] font-semibold leading-tight text-warning">
-        {faellig === 1 ? '1 Follow-up fällig' : `${faellig} Follow-ups fällig`}
-      </span>
-    </button>
-  );
-}
-
 function Footer({
   collapsed,
   onToggle,
   angeheftet,
   onToggleAngeheftet,
-  onNavigate,
 }: {
   collapsed: boolean;
   onToggle: () => void;
   angeheftet: boolean;
   onToggleAngeheftet: () => void;
-  onNavigate: (v: ViewId) => void;
 }) {
   return (
     <div className="shrink-0 border-t border-border-subtle p-3.5">
-      {!collapsed && <FaelligFeld onNavigate={onNavigate} />}
       {/* Anheften — nur sichtbar, wenn die Leiste offen ist. Eingeklappt waere
           der Knopf sinnlos: anheften heisst ja gerade "offen lassen". */}
       {!collapsed && (

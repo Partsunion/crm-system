@@ -14,7 +14,7 @@ vi.mock('./CalendarTimeGrid', () => ({ CalendarTimeGrid: () => <div>Kalender-Zei
 vi.mock('./AppointmentConflictReview', () => ({ AppointmentConflictReview: () => null }));
 
 describe('calendar appointment editor', () => {
-  beforeEach(() => { vi.clearAllMocks(); api.appointments.mockResolvedValue([]); api.create.mockResolvedValue({ appointment: {}, inviteSent: true }); api.confirm.mockReturnValue(false); vi.stubGlobal('confirm', api.confirm); });
+  beforeEach(() => { sessionStorage.clear(); vi.clearAllMocks(); api.appointments.mockResolvedValue([]); api.create.mockResolvedValue({ appointment: {}, inviteSent: true }); api.confirm.mockReturnValue(false); vi.stubGlobal('confirm', api.confirm); });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
   it('requires a valid invitation address and normalizes a safe meeting link', async () => {

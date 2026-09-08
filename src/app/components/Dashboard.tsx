@@ -15,13 +15,15 @@ import { qualityOf, localDayKey, timestamp } from '../utils/leadQuality';
 import { Card, PageHeader, StatusBadge, Button, EmptyState, SEITEN_RAND, statusColor } from './ui-kit';
 import { WORKSPACE_CARD_INNER } from './dichte';
 import { RankingTable } from '../ranking/RankingTable';
+import type { LeadWorkView, LeadWorkRequest } from './LeadsView';
+import { useWorkspacePreference } from '../utils/useWorkspacePreference';
 
-export function Dashboard({ onOpenKalender, onOpenLead, onOpenLeads }: { onOpenKalender?: () => void; onOpenLead?: (id: string) => void; onOpenLeads?: () => void } = {}) {
+export function Dashboard({ onOpenKalender, onOpenLead, onOpenLeads }: { onOpenKalender?: () => void; onOpenLead?: (id: string) => void; onOpenLeads?: (preset?: LeadWorkView, options?: Omit<LeadWorkRequest,'view'>) => void } = {}) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState(false);
-  const [scope, setScope] = useState<'mine' | 'team'>('mine');
+  const [scope, setScope] = useWorkspacePreference<'mine' | 'team'>('dashboard.scope', 'mine', ['mine','team']);
   const [rankingRevision, setRankingRevision] = useState(0);
   const today = localDayKey(new Date());
   const user = getCurrentUser();
@@ -69,17 +71,16 @@ export function Dashboard({ onOpenKalender, onOpenLead, onOpenLeads }: { onOpenK
     .sort((a, b) => a.start_at.localeCompare(b.start_at)), [appointments, scope, user?.id]);
   const stages = getStatusOptions();
   const metrics = [
-    { label: 'Offene Leads', value: working.length, detail: scope === 'mine' ? 'in deiner Verantwortung' : 'im gesamten Team' },
-    { label: 'Wiedervorlagen fällig', value: due.length, detail: 'heute und überfällig' },
-    { label: 'Ohne nächsten Schritt', value: missingNext.length, detail: 'benötigen eine Aktion' },
-    { label: 'Noch nicht zugewiesen', value: unassignedCount, detail: 'im offenen Bestand' },
+    { label: 'Offene Leads', value: working.length, detail: scope === 'mine' ? 'in deiner Verantwortung' : 'im gesamten Team', preset: scope === 'mine' ? 'mine' : 'all' },
+    { label: 'Wiedervorlagen fällig', value: due.length, detail: 'heute und überfällig', preset: 'due' },
+    { label: 'Ohne nächsten Schritt', value: missingNext.length, detail: 'benötigen eine Aktion', preset: 'no_next_step' },
+    { label: 'Noch nicht zugewiesen', value: unassignedCount, detail: 'im offenen Bestand', preset: 'unassigned' },
   ];
 
   if (error) return <div className={SEITEN_RAND + ' space-y-5'}><PageHeader title="Arbeitsübersicht" subtitle="Deine tägliche Vertriebsarbeit" /><LoadError message="Die Arbeitsübersicht konnte nicht vollständig geladen werden." onRetry={() => void load()} /></div>;
 
   return <div className={SEITEN_RAND + ' crm-dashboard space-y-5'}>
     <section className="crm-page-intro border-b border-border pb-4 pt-1">
-      <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-text-muted">Vertriebsfokus</div>
       <PageHeader
         title="Arbeitsübersicht"
         subtitle={new Intl.DateTimeFormat('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())}
@@ -100,17 +101,15 @@ export function Dashboard({ onOpenKalender, onOpenLead, onOpenLeads }: { onOpenK
     </section>
 
     <section aria-label="Vertriebskennzahlen" className="crm-facts-line">
-      {metrics.map(item => <div key={item.label} title={item.detail}><span>{item.label}</span><strong>{busy || error ? '—' : item.value}</strong></div>)}
+      {metrics.map(item => <button type="button" key={item.label} title={item.detail+' · Arbeitsliste öffnen'} onClick={()=>onOpenLeads?.(item.preset as LeadWorkView,{openOnly:true,owner:scope==='mine'&&item.preset!=='unassigned'?user?.username:undefined})} disabled={busy}><span>{item.label}</span><strong>{busy || error ? '—' : item.value}</strong><ArrowRight className="size-3.5" aria-hidden/></button>)}
     </section>
-
-    <RankingTable refreshKey={rankingRevision} />
 
     <div className="crm-dashboard-grid grid items-start gap-5 xl:grid-cols-[minmax(0,1.6fr)_minmax(300px,1fr)]">
       <div className="min-w-0 space-y-6">
       <Card className="crm-focus-panel overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
           <div><h2 className="flex items-center gap-2 font-semibold"><span className="flex size-8 items-center justify-center rounded-lg bg-status-warning/10 text-status-warning"><AlarmClock className="size-4" /></span>Nächste Schritte</h2><p className="mt-1.5 text-sm text-text-muted">Fällige Wiedervorlagen zuerst, danach Leads ohne Termin.</p></div>
-          <Button variant="ghost" size="sm" onClick={onOpenLeads}>Alle Leads <ArrowRight className="size-4" /></Button>
+          <Button variant="ghost" size="sm" onClick={()=>onOpenLeads?.('due',{owner:scope==='mine'?user?.username:undefined,openOnly:true})}>Rückrufe öffnen <ArrowRight className="size-4" /></Button>
         </div>
         {busy ? <p className="border-t border-border-subtle p-5 text-sm text-text-muted" role="status">Arbeitsliste wird geladen…</p> : queue.length ? queue.map((lead) => <button key={lead.id} className="crm-work-row" onClick={() => onOpenLead?.(lead.id)}><span className="flex min-w-0 items-center gap-3"><span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-accent-500/[0.10] font-display text-xs font-bold text-accent-500">{lead.company.slice(0, 2).toUpperCase()}</span><span className="min-w-0"><span className="block truncate font-semibold">{lead.company}</span><span className="mt-0.5 block truncate text-sm text-text-muted">{lead.contactPerson || 'Ansprechpartner ergänzen'}</span></span></span><span><StatusBadge status={lead.status} /><span className="mt-1 block text-xs text-text-muted">{lead.assignedTo || 'Nicht zugewiesen'}</span></span><span className={'rounded-lg px-2.5 py-1.5 text-sm font-medium ' + (lead.nextFollowUpDate ? 'bg-status-warning/10 text-status-warning' : 'bg-elevated text-text-secondary')}>{lead.nextFollowUpDate ? new Date(lead.nextFollowUpDate).toLocaleDateString('de-DE') : 'Nächsten Schritt planen'}</span></button>) : !error && <EmptyState icon={<CheckCircle2 className="size-5" />} title={scope === 'mine' && !working.length ? 'Keine offenen Leads zugewiesen' : 'Keine offenen Wiedervorlagen'} description="In der Leadliste findest du den vollständigen Bestand und die Zuständigkeiten." />}
       </Card>
@@ -133,9 +132,10 @@ export function Dashboard({ onOpenKalender, onOpenLead, onOpenLeads }: { onOpenK
           { label: 'Ohne Ansprechpartner', value: quality.noPerson },
         ].map(({ label, value }) => <p key={label} className="flex justify-between gap-3"><span className="text-text-secondary">{label}</span><strong className={value && !busy ? 'text-status-warning' : 'text-text-primary'}>{busy ? '—' : value}</strong></p>)}</div>
         <p className="mt-4 text-xs leading-relaxed text-text-muted">Geprüft werden vorhandene Basisdaten. Kontaktwege sind nicht extern verifiziert.</p>
-        <Button className="mt-5" variant="secondary" onClick={onOpenLeads}><Phone className="size-4" /> Leads qualifizieren</Button>
+        <Button className="mt-5" variant="secondary" onClick={()=>onOpenLeads?.()}><Phone className="size-4" /> Leads qualifizieren</Button>
       </Card>
       </div>
     </div>
+    <RankingTable refreshKey={rankingRevision} />
   </div>;
 }
