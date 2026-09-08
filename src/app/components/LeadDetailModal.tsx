@@ -255,7 +255,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
   const callbackPlanner = useCallbackPlanner({leadId:lead.id,assigneeId:myAdminId,enabled:planOpen,onSaved:()=>{void reloadAppts();onLeadChanged?.();}});
 
   const completeAppt = async (a: Appointment) => {
-    try { await updateAppointment(a.id, { status: 'completed' }); await reloadAppts(); toast.success('Als erledigt markiert.'); }
+    try { await updateAppointment(a.id, { status: 'completed' }); await reloadAppts(); onLeadChanged?.(); toast.success('Als erledigt markiert.'); }
     catch (e: any) { toast.error(e.message || 'Fehlgeschlagen'); }
   };
   const removeAppt = async (a: Appointment) => {
