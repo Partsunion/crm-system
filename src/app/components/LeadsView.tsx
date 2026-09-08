@@ -244,7 +244,7 @@ export function LeadsView({
 
   const loadLeads = async () => {
     setLoading(true); setLoadError('');
-    try { const data = await getLeads(); setLeads(data); return true; }
+    try { const data = await getLeads(); setLeads(data); setDetailLead(current => current ? data.find(item => item.id === current.id) || null : null); return true; }
     catch (error) { setLoadError(error instanceof Error ? error.message : 'Leads konnten nicht geladen werden.'); return false; }
     finally { setLoading(false); }
   };

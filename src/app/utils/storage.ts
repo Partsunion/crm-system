@@ -1189,7 +1189,11 @@ export async function updateAppointment(id: string, patch: AppointmentInput): Pr
     body: JSON.stringify(patch),
   });
   if (!res.ok) throw new Error('Termin konnte nicht aktualisiert werden');
-  return await res.json();
+  const result = await res.json();
+  // Completing a callback also updates its lead's next follow-up on the server.
+  vergessen(SCHLUESSEL.leads);
+  vergessenMitPraefix('termine:');
+  return result;
 }
 
 export async function cancelAppointment(id: string): Promise<void> {

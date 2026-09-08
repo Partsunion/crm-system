@@ -50,6 +50,7 @@ export function PipelineView({ onOpenCalendar }: { onOpenCalendar?: (lead: Lead)
       const allLeads = await getLeads();
       const activeStages = getSettings().pipelineStages.filter((s) => s.isActive).sort((a, b) => a.order - b.order);
       setLeads(Array.isArray(allLeads) ? allLeads : []);
+      setDetailLead(current => current ? allLeads.find(item => item.id === current.id) || null : null);
       setStages(activeStages);
       return true;
     } catch (error) {
