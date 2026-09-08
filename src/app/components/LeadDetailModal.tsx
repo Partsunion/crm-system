@@ -1,5 +1,5 @@
-import { useAppointmentConflicts } from '../utils/useAppointmentConflicts';
-import { AppointmentConflictReview } from './AppointmentConflictReview';
+import { CallbackPlanner, useCallbackPlanner } from './CallbackPlanner';
+import { VoiceDictation } from './VoiceDictation';
 import { LoadError } from './LoadError';
 import { leadCategory } from '../utils/stages';
 import { safeWebsiteUrl } from '../utils/safeUrl';
@@ -16,7 +16,7 @@ import { toast } from 'sonner';
 import {
   type Lead, type Activity, type ActivityType,
   getActivities, createActivity, updateActivity, deleteActivity, getStatusOptions, getCurrentUser,
-  getAppointments, createAppointment, updateAppointment, cancelAppointment, getAppointmentAdmins,
+  getAppointments, updateAppointment, cancelAppointment, getAppointmentAdmins,
   saveLead, type Appointment, type AppointmentAdmin,
 } from '../utils/storage';
 import { LeadEmailComposer } from './LeadEmailComposer';
@@ -163,15 +163,6 @@ function isOverdue(iso: string): boolean {
   return iso.slice(0, 16) < `${dateKey(now)}T${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
 }
 
-/** Nächster sinnvoller Vorschlags-Slot: nächste volle Viertelstunde + 1 h. */
-function nextSlotTime(): string {
-  const d = new Date(Date.now() + 60 * 60000);
-  const q = Math.ceil(d.getMinutes() / 15) * 15;
-  d.setMinutes(q === 60 ? 0 : q);
-  if (q === 60) d.setHours(d.getHours() + 1);
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
-
 const CALL_TYPE_LABEL: Record<string, string> = { quali: 'Quali-Call', sales: 'Sales-Call', call: 'Rückruf', other: 'Termin' };
 
 function relTime(iso: string): string {
@@ -235,14 +226,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
   const [appts, setAppts] = useState<Appointment[]>([]);
   const [admins, setAdmins] = useState<AppointmentAdmin[]>([]);
   const [planOpen, setPlanOpen] = useState(false);
-  const [planSaving, setPlanSaving] = useState(false);
-  const [planDate, setPlanDate] = useState(() => dateKey(new Date()));
-  const [planTime, setPlanTime] = useState(() => nextSlotTime());
-  const [planDuration, setPlanDuration] = useState(15);
-  const [planAssignee, setPlanAssignee] = useState('');
-  const [planNote, setPlanNote] = useState('');
-  const planReview = useAppointmentConflicts(planOpen, `${planDate}T${planTime}`, planDuration, planAssignee);
-  useWorkspaceGuard(Boolean(note.trim() || dmInput.trim() || reached !== null || moveTo !== status || editingId || planOpen || emailState.dirty), saving || planSaving || emailState.busy);
+  useWorkspaceGuard(Boolean(note.trim() || dmInput.trim() || reached !== null || moveTo !== status || editingId || emailState.dirty), saving || emailState.busy);
 
   const reload = useCallback(async () => {
     setLoading(true); setActivityError(false);
@@ -268,39 +252,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
     () => admins.find((a) => a.username?.toLowerCase() === (currentUser?.username || '').toLowerCase())?.id || '',
     [admins, currentUser],
   );
-  useEffect(() => { if (myAdminId) setPlanAssignee((prev) => prev || myAdminId); }, [myAdminId]);
-
-  const scheduleCall = async () => {
-    if (planSaving) return;
-    if (!planAssignee) { toast.error('Bitte eine zuständige Person auswählen.'); return; }
-    if (planReview.loading || planReview.error) { toast.error('Bitte zuerst die Verfügbarkeit prüfen.'); return; }
-    if (!planDate || !planTime) { toast.error('Bitte Datum und Uhrzeit angeben.'); return; }
-    setPlanSaving(true);
-    try {
-      if (!(await planReview.verify())) { toast.error('Bitte die angezeigte Überschneidung prüfen.'); return; }
-      await createAppointment({
-        type: 'call',
-        companyId: lead.id,
-        customerName: lead.company,
-        customerPhone: lead.phone || lead.whatsappNumber || undefined,
-        assigneeId: planAssignee || undefined,
-        notes: planNote.trim() || undefined,
-        start: `${planDate}T${planTime}`,
-        durationMinutes: planDuration,
-        sendInvite: false, // interner Rückruf-Slot — Kunde bekommt KEINE Einladung
-      });
-      // Follow-up-Datum am Lead nachziehen (best effort, Liste/Dashboard bleiben konsistent).
-      try { await saveLead({ id: lead.id, nextFollowUpDate: planDate }); onLeadChanged?.(); } catch { toast.warning('Rückruf angelegt, aber das Follow-up-Datum konnte nicht aktualisiert werden. Bitte den Lead prüfen.'); }
-      setPlanOpen(false);
-      setPlanNote('');
-      await reloadAppts();
-      toast.success(`Anruf geplant: ${apptLabel(`${planDate}T${planTime}`)}`);
-    } catch (e: any) {
-      toast.error(e.message || 'Anruf konnte nicht geplant werden');
-    } finally {
-      setPlanSaving(false);
-    }
-  };
+  const callbackPlanner = useCallbackPlanner({leadId:lead.id,assigneeId:myAdminId,enabled:planOpen,onSaved:()=>{void reloadAppts();onLeadChanged?.();}});
 
   const completeAppt = async (a: Appointment) => {
     try { await updateAppointment(a.id, { status: 'completed' }); await reloadAppts(); toast.success('Als erledigt markiert.'); }
@@ -311,9 +263,6 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
     try { await cancelAppointment(a.id); await reloadAppts(); toast.success('Anruf abgesagt.'); }
     catch (e: any) { toast.error(e.message || 'Absagen fehlgeschlagen'); }
   };
-
-  /** Datum-Schnellwahl: heute / morgen / übermorgen / +1 Woche. */
-  const datePreset = (days: number) => setPlanDate(dateKey(new Date(Date.now() + days * 864e5)));
 
   const stageChanged = !!moveTo && moveTo !== status;
 
@@ -387,8 +336,8 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
           </Button>
           {navigation && <div className="ml-auto flex items-center gap-2" aria-label="Leads durchgehen">
             <span className="text-xs tabular-nums text-text-muted">{navigation.index >= 0 ? (navigation.index + 1) + ' / ' + navigation.total : 'Außerhalb des Filters'}</span>
-            <IconButton aria-label="Vorheriger Lead" disabled={!navigation.previous || saving || planSaving} onClick={navigation.previous}><ChevronLeft className="size-4"/></IconButton>
-            <Button variant="secondary" size="sm" disabled={!navigation.next || saving || planSaving} onClick={navigation.next}>Nächster Lead<ChevronRight className="size-4"/></Button>
+            <IconButton aria-label="Vorheriger Lead" disabled={!navigation.previous || saving} onClick={navigation.previous}><ChevronLeft className="size-4"/></IconButton>
+            <Button variant="secondary" size="sm" disabled={!navigation.next || saving} onClick={navigation.next}>Nächster Lead<ChevronRight className="size-4"/></Button>
           </div>}
           {currentUser?.app_access?.admin && leadCategory({ status }) === 'won' && (
             <button
@@ -462,6 +411,8 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
               placeholder="Wie lief das Gespräch? Was wurde besprochen, was sind die nächsten Schritte?…"
               className={cn(inputClass, 'resize-none py-2')}
             />
+
+            <VoiceDictation leadId={lead.id} disabled={saving||Boolean(phone?.live)} onText={text=>setNote(previous=>previous.trim()?previous+"\n\n"+text:text)}/>
 
             {/* Entscheider */}
             <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-canvas/60 p-2.5">
@@ -612,7 +563,8 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
               </span>
               <button
                 type="button"
-                onClick={() => setPlanOpen((o) => !o)}
+                hidden={planOpen}
+                onClick={() => setPlanOpen(true)}
                 className={cn(
                   'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset transition-colors',
                   planOpen
@@ -624,57 +576,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
               </button>
             </div>
 
-            {planOpen && (
-              <div className="mb-3 space-y-2 rounded-lg border border-border-subtle bg-canvas/60 p-2.5">
-                <div className="flex flex-wrap gap-1.5">
-                  {[
-                    { label: 'Heute', days: 0 },
-                    { label: 'Morgen', days: 1 },
-                    { label: 'Übermorgen', days: 2 },
-                    { label: '+1 Woche', days: 7 },
-                  ].map((p) => (
-                    <button
-                      key={p.label}
-                      type="button"
-                      onClick={() => datePreset(p.days)}
-                      className={cn(
-                        'rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ring-inset transition-colors',
-                        planDate === dateKey(new Date(Date.now() + p.days * 864e5))
-                          ? 'bg-accent-500 text-white ring-accent-500'
-                          : 'bg-canvas text-text-secondary ring-border-subtle hover:text-text-primary',
-                      )}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="grid grid-cols-[1fr_auto] gap-2">
-                  <input aria-label="Rückrufdatum" type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)} className={cn(inputClass, 'h-9')} />
-                  <input aria-label="Rückrufuhrzeit" type="time" value={planTime} onChange={(e) => setPlanTime(e.target.value)} className={cn(inputClass, 'h-9 w-[110px]')} />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <select aria-label="Rückrufdauer" value={String(planDuration)} onChange={(e) => setPlanDuration(Number(e.target.value))} className={cn(inputClass, 'h-9')}>
-                    {[10, 15, 30, 45, 60].map((d) => <option key={d} value={d}>{d} Min.</option>)}
-                  </select>
-                  <select aria-label="Rückrufzuständigkeit" value={planAssignee} onChange={(e) => setPlanAssignee(e.target.value)} className={cn(inputClass, 'h-9')}>
-                    <option value="">— Zuständig —</option>
-                    {admins.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                  </select>
-                </div>
-                <input
-                  value={planNote}
-                  onChange={(e) => setPlanNote(e.target.value)}
-                  placeholder="Worum geht's? (z. B. Rückruf wegen Angebot)"
-                  className={cn(inputClass, 'h-9')}
-                />
-                <AppointmentConflictReview review={planReview} />
-                <p className="text-sm text-text-muted">Alle Uhrzeiten Europe/Berlin. Die Prüfung umfasst nur CRM-Termine.</p>
-                <Button size="sm" className="w-full" onClick={scheduleCall} disabled={planSaving || planReview.loading || planReview.error}>
-                  {planSaving ? <Loader2 className="size-4 animate-spin" /> : <PhoneCall className="size-4" />}
-                  Rückruf planen
-                </Button>
-              </div>
-            )}
+            {planOpen && <CallbackPlanner controller={callbackPlanner} admins={admins} onClose={()=>setPlanOpen(false)}/>}
 
             {appts.length === 0 && !planOpen && !appointmentError && (
               <p className="py-1 text-xs text-text-muted">Kein Anruf geplant.</p>
@@ -757,7 +659,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
           </div>
         </div>
       </div>
-    </Shell>{emailOpen && <LeadEmailComposer leadId={lead.id} onState={setEmailState} onClose={()=>setEmailOpen(false)} onSent={()=>{void reload();onLeadChanged?.();}}/>}</>
+    </Shell>{emailOpen && <LeadEmailComposer leadId={lead.id} conversationNotes={(hasCallNote?phone?.notes?.text:note)||''} onState={setEmailState} onClose={()=>setEmailOpen(false)} onSent={()=>{void reload();onLeadChanged?.();}}/>}</>
   );
 }
 

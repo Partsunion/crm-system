@@ -3,6 +3,7 @@ import { ArrowDownLeft, ArrowUpRight, Check, ChevronDown, ChevronUp, Circle, Ext
 import type { Lead } from '../utils/storage';
 import { getCurrentUser } from '../utils/storage';
 import { usePhone } from './context';
+import { VoiceDictation } from '../components/VoiceDictation';
 import { callLabel, durationLabel, oauthErrorMessage, phoneApi, type CallLog } from './api';
 import { Button, Card, cn, inputClass } from '../components/ui-kit';
 
@@ -164,6 +165,7 @@ export function ActiveCallNote() {
     <p className="text-xs text-text-muted">{phone.call.number} · {phone.call.company}</p>
     <label htmlFor="crm-lead-call-note" className="sr-only">Notiz zu diesem Anruf</label>
     <textarea id="crm-lead-call-note" rows={6} maxLength={20000} className={cn(inputClass,'resize-y py-3 text-sm leading-relaxed')} value={phone.notes?.text||''} onChange={event=>phone.editNote(event.target.value)} placeholder="Bedarf, Einwände und nächste Schritte festhalten …"/>
+    {phone.call.leadId&&<VoiceDictation leadId={phone.call.leadId} disabled={phone.live} onText={text=>phone.editNote((phone.notes?.text?phone.notes.text+'\n\n':'')+text)}/>}
     <div className="flex items-center justify-between text-xs"><span role="status" className={phone.noteError?'text-status-danger':'text-text-muted'}>{phone.saving?'Speichert …':phone.noteError?'Nicht gespeichert – Entwurf bleibt erhalten':phone.notes?.dirty?'Ungespeichert':'Automatisch zum Anruf gespeichert'}</span>{phone.noteError&&<button type="button" className="font-medium text-accent-500" onClick={phone.open}>Entwurf prüfen</button>}</div>
   </div>;
 }

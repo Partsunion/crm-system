@@ -1,6 +1,6 @@
 import { getToken } from './storage';
 const base=import.meta.env.VITE_API_BASE_URL || 'https://api.partsunion.de';
-export interface CrmMailStatus {connected:boolean;sender:{name:string;address:string}|null;error:string|null;sharedWithAdmin:boolean}
+export interface CrmMailStatus {connected:boolean;sender:{name:string;address:string}|null;error:string|null;sharedWithAdmin:boolean;aiAvailable?:boolean}
 export interface CrmMailDraft extends CrmMailStatus {leadId:string;recipient:string;subject:string;body:string;html:string|null}
 export class CrmMailRequestError extends Error {constructor(message:string,public code:string,public status:number){super(message);}}
 async function request<T>(path:string,body?:unknown):Promise<T>{

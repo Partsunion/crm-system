@@ -1179,6 +1179,18 @@ export async function createAppointment(input: AppointmentInput): Promise<Appoin
   return await res.json();
 }
 
+export async function saveCrmCallback(leadId:string,id:string,input:{start:string;durationMinutes:number;assigneeId:string;notes:string}):Promise<AppointmentMutation>{
+  const response = await fetch(`${API_BASE_URL}/api/crm/workflow/leads/${encodeURIComponent(leadId)}/callbacks/${encodeURIComponent(id)}`, {
+    credentials: 'include',
+    method: 'PUT', headers: authHeaders({'Content-Type':'application/json'}), body: JSON.stringify(input),
+  });
+  const result = await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(result.error||'Der Rückruf konnte nicht gespeichert werden.');
+  vergessenMitPraefix('termine:');
+  vergessenMitPraefix('leads');
+  return result;
+}
+
 export async function updateAppointment(id: string, patch: AppointmentInput): Promise<AppointmentMutation> {
   // Jede Terminaenderung entwertet ALLE Zeitraeume — siehe vergessenMitPraefix.
   vergessenMitPraefix('termine:');
