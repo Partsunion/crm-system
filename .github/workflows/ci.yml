@@ -35,7 +35,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Partsunion/Admin-Dashboard
-          ref: e39a828db39b181d3f31128aa2ac2aa900e6a37f
+          # Keep the cross-workspace token contract pinned to the Admin
+          # release that is paired with this CRM release.
+          ref: b0227713a8126ece752677eebd045d30275be0a3
           path: Admin-Dashboard
           persist-credentials: false
 
