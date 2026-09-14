@@ -30,7 +30,7 @@ export class BrowserPhone {
   constructor(private audio:HTMLAudioElement,private event:(state:string)=>void,private incoming:(call:SdkCall)=>void,private connection:(ready:boolean)=>void) {}
   async activate(token:string) {
     // SDK 3.12.0 does not ship declarations for its calling subpath.
-    const [module,{MemoryStoreAdapter}] = await Promise.all([import('webex/calling'),import('@webex/webex-core')]);
+    const [module,{MemoryStoreAdapter}] = await Promise.all([import('@webex/calling'),import('@webex/webex-core')]);
     this.factory=(module.default?.default||module.default) as CallingFactory;
     this.client=await this.factory.init({
       webexConfig:{credentials:{access_token:token},config:{logger:{level:'error'},storage:{boundedAdapter:MemoryStoreAdapter,unboundedAdapter:MemoryStoreAdapter}}},

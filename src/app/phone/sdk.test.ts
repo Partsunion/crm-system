@@ -3,7 +3,7 @@ import { BrowserPhone } from './sdk';
 
 const mock=vi.hoisted(()=>({registered:false,lines:{} as Record<string,unknown>}));
 vi.mock('@webex/webex-core',()=>({MemoryStoreAdapter:class{}}));
-vi.mock('webex/calling',()=>({default:{init:async()=>({
+vi.mock('@webex/calling',()=>({default:{init:async()=>({
   on:(event:string,fn:()=>void)=>{if(event==='ready')queueMicrotask(fn);},off:vi.fn(),
   register:async()=>undefined,registered:mock.registered,
   callingClient:{getLines:()=>mock.lines},deregister:async()=>undefined,

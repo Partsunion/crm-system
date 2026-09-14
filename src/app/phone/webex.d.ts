@@ -1,4 +1,4 @@
-declare module 'webex/calling' {
+declare module '@webex/calling' {
   const Calling: {default?:unknown};
   export default Calling;
 }
