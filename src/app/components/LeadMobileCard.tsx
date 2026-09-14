@@ -1,4 +1,5 @@
-import { CalendarClock, Mail, Phone, Pencil, Trash2 } from 'lucide-react';
+import { CalendarClock, Mail, Pencil, Trash2 } from 'lucide-react';
+import { CallButton } from '../phone/PhoneUI';
 import type { Lead } from '../utils/storage';
 import { qualityOf, timestamp } from '../utils/leadQuality';
 import { Card, IconButton, StatusSelect } from './ui-kit';
@@ -19,7 +20,7 @@ export function LeadMobileCard({ lead, selected, statuses, due, onSelect, onOpen
         <p className="mt-1 text-xs text-text-muted">{[lead.contactPerson, lead.city].filter(Boolean).join(' · ') || 'Ansprechpartner und Standort offen'}</p>
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm">
           {email && <a className="inline-flex min-w-0 items-center gap-1.5 text-accent-500" href={`mailto:${email}`}><Mail className="size-3.5 shrink-0" /><span className="break-all">{email}</span></a>}
-          {phone.replace(/\D/g, '').length >= 6 && <a className="inline-flex items-center gap-1.5 text-accent-500" href={`tel:${phone}`}><Phone className="size-3.5" />{lead.phone}</a>}
+          {phone.replace(/\D/g, '').length >= 6 && <CallButton lead={lead} compact />}
           {!quality.contactable && <span className="text-text-muted">Kein nutzbarer Kontaktweg erfasst</span>}
         </div>
       </div>

@@ -36,9 +36,12 @@
  *    wie viele Leads es trifft.
  */
 import { useState } from 'react';
+import { PhoneSettingsCard } from '../phone/PhoneUI';
+import { CrmMailSettings } from './LeadEmailComposer';
 import { Plus, Trash2, Save, Tag, Package, Briefcase, ListChecks, Check } from 'lucide-react';
 import { toast } from 'sonner';
-import { getSettings, getLeads, type Settings as SettingsType } from '../utils/storage';
+import { getSettings, getLeads, getCurrentUser, type Settings as SettingsType } from '../utils/storage';
+import { useWorkspaceGuard } from '../utils/useWorkspaceGuard';
 import { einstellungenSichern } from '../utils/einstellungenSichern';
 import { Button, Card, Field, IconButton, PageHeader, SEITEN_RAND, cn, inputClass } from './ui-kit';
 import { KARTE_INNEN, LEER_INNEN } from './dichte';
@@ -49,6 +52,11 @@ export function Settings() {
   const [settings, setSettings] = useState<SettingsType>(getSettings());
   const [saved, setSaved] = useState(false);
   const [speichert, setSpeichert] = useState(false);
+  const [savedSnapshot, setSavedSnapshot] = useState(() => JSON.stringify(getSettings()));
+  const [section, setSection] = useState<'phone'|'mail'|'fields'|'company'>('phone');
+  const dirty = JSON.stringify(settings) !== savedSnapshot;
+  const canManage = getCurrentUser()?.role === 'manager' || Boolean(getCurrentUser()?.app_access?.admin);
+  useWorkspaceGuard(dirty, speichert);
   /**
    * Wie viele Leads hängen an welchem Status.
    *
@@ -65,6 +73,7 @@ export function Settings() {
     const ok = await einstellungenSichern(settings, 'Einstellungen gespeichert.');
     setSpeichert(false);
     if (!ok) return;
+    setSavedSnapshot(JSON.stringify(settings));
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -108,14 +117,18 @@ export function Settings() {
         title="Einstellungen"
         subtitle="Listen und Firmenangaben für dieses CRM."
         actions={
-          <Button onClick={handleSave} disabled={speichert}>
+          canManage && <Button onClick={handleSave} disabled={speichert || !dirty}>
             {saved ? <Check className="size-4" /> : <Save className="size-4" />}
-            {speichert ? 'Speichert…' : saved ? 'Gespeichert' : 'Speichern'}
+            {speichert ? 'Speichert…' : saved ? 'Gespeichert' : dirty ? 'Änderungen speichern' : 'Gespeichert'}
           </Button>
         }
       />
 
-      <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
+      <nav className="flex flex-wrap gap-2 border-b border-border-subtle" aria-label="Einstellungsbereiche">{([{id:'phone',label:'Telefonie'},{id:'mail',label:'E-Mail'},{id:'fields',label:'CRM-Felder'},{id:'company',label:'Unternehmen'}] as const).map(tab=><button key={tab.id} type="button" className="crm-view-tab" aria-pressed={section===tab.id} onClick={()=>setSection(tab.id)}>{tab.label}</button>)}</nav>
+      {dirty && <p role="status" className="text-xs text-status-warning">Ungespeicherte Änderungen</p>}
+      {section === 'phone' && <PhoneSettingsCard />}
+      {section === 'mail' && <CrmMailSettings />}
+      {section === 'fields' && <fieldset disabled={!canManage || speichert} className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
         <ListEditor
           icon={<ListChecks className="size-4" />}
           title="Status"
@@ -149,11 +162,11 @@ export function Settings() {
           onAdd={(v) => addItem('tags', v)}
           onRemove={(v) => void removeItem('tags', v, 'Etikett')}
         />
-      </div>
+      </fieldset>}
 
-      <Card className={KARTE_INNEN}>
+      {section === 'company' && <Card className={KARTE_INNEN}>
         <KartenTitel icon={<Briefcase className="size-4" />} title="Unternehmen" />
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <fieldset disabled={!canManage || speichert} className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <Field label="Firmenname">
             <input
               type="text"
@@ -170,8 +183,8 @@ export function Settings() {
               className={cn(inputClass, 'h-9')}
             />
           </Field>
-        </div>
-      </Card>
+        </fieldset>
+      </Card>}
     </div>
   );
 }

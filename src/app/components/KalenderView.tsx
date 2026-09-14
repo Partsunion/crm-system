@@ -6,6 +6,7 @@
  * Bestätigungs-Link) → bestätigt selbst → Status springt auf „Bestätigt".
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useWorkspacePreference } from '../utils/useWorkspacePreference';
 import { useAppointmentConflicts } from '../utils/useAppointmentConflicts';
 import { validateAppointmentDraft } from '../utils/appointmentForm';
 import { safeWebsiteUrl } from '../utils/safeUrl';
@@ -14,7 +15,6 @@ import { CalendarTimeGrid } from './CalendarTimeGrid';
 import { AppointmentConflictReview } from './AppointmentConflictReview';
 import { LoadError } from './LoadError';
 import { toast } from 'sonner';
-import { KALENDER_ZELLE } from './dichte';
 import {
   Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, Loader2, Clock, User, Mail, Phone,
   MapPin, Check, RotateCcw, CalendarCheck, CalendarX, Link2, CheckCircle2, Ban, MoreHorizontal, ExternalLink, Trash2,
@@ -22,7 +22,7 @@ import {
 import {
   getAppointments, getAppointmentAdmins, createAppointment, updateAppointment, cancelAppointment, deleteAppointment,
   getCurrentUser, type Appointment, type AppointmentAdmin, type AppointmentInput, type AppointmentStatus,
-  getTeams, type CrmTeam,
+  getTeams, type CrmTeam, type Lead,
 } from '../utils/storage';
 import {
   PageHeader, Card, Button, IconButton, Field, Modal, inputSized, EmptyState, cn, SEITEN_RAND,
@@ -60,16 +60,16 @@ function buildGrid(cursor: Date): Date[] {
   return Array.from({ length: 42 }, (_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
 }
 
-type FormState = AppointmentInput & { date?: string; time?: string };
+type FormState = AppointmentInput & { date?: string; time?: string; managedTeams?: boolean };
 const emptyForm = (): FormState => ({ type: 'sales', durationMinutes: 30, sendInvite: true, date: '', time: '10:00' });
 
-export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => void } = {}) {
+export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (leadId: string) => void; lead?: Lead | null; onClearLead?: () => void } = {}) {
   const currentUser = getCurrentUser();
   const [cursor, setCursor] = useState<Date>(() => new Date());
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [admins, setAdmins] = useState<AppointmentAdmin[]>([]);
   const [loading, setLoading] = useState(true);
-  const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
+  const [assigneeFilter, setAssigneeFilter] = useWorkspacePreference<string>('calendar.owner', 'all');
   const [selectedDay, setSelectedDay] = useState<string>(() => toKey(new Date()));
   const [createOpen, setCreateOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -78,14 +78,17 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const saveLock = useRef(false);
   const [saving, setSaving] = useState(false);
+  const resendLock = useRef(false);
+  const [resending, setResending] = useState(false);
+  const [inviteError, setInviteError] = useState('');
   const [detail, setDetail] = useState<Appointment | null>(null);
-  const [mode, setMode] = useState<CalendarMode>('week');
+  const [mode, setMode] = useWorkspacePreference<CalendarMode>('calendar.mode', 'week', ['day','week','month','agenda']);
   const [teams, setTeams] = useState<CrmTeam[]>([]);
-  const [teamFilter, setTeamFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('active');
+  const [teamFilter, setTeamFilter] = useWorkspacePreference<string>('calendar.team', 'all');
+  const [statusFilter, setStatusFilter] = useWorkspacePreference<string>('calendar.status', 'active');
   const review = useAppointmentConflicts(createOpen, `${form.date || ''}T${form.time || ''}`, form.durationMinutes || 30, form.assigneeId, editingId || undefined);
   const [loadError, setLoadError] = useState(false);
-  useWorkspaceGuard(createOpen && formDirty, saving);
+  useWorkspaceGuard(createOpen && formDirty, saving || resending);
 
   const grid = useMemo(() => calendarDays(cursor, mode), [cursor, mode]);
   const todayKey = toKey(new Date());
@@ -134,17 +137,24 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
 
   function openCreate(dayKey?: string) {
     setEditingId(null);
-    setForm({ ...emptyForm(), date: dayKey || selectedDay || todayKey });
+    const owner = lead?.assignedTo?.toLowerCase();
+    const assignee = owner ? admins.find(a => a.id === lead?.assignedTo || a.username?.toLowerCase() === owner || a.name?.toLowerCase() === owner) : undefined;
+    const assigneeId = assignee?.id || myAdminId || undefined;
+    setForm({ ...emptyForm(), date: dayKey || selectedDay || todayKey, assigneeId,
+      createTeams: Boolean(admins.find(a => a.id === assigneeId)?.teamsAvailable),
+      ...(lead ? { companyId: lead.id, customerName: lead.contactPerson || lead.company, customerEmail: lead.email || '', customerPhone: lead.phone || '', title: `Sales-Call · ${lead.company}`, assigneeId: assignee?.id || myAdminId || undefined } : {}),
+    });
+    setInviteError('');
     setFormDirty(false); setFormErrors({});
     setCreateOpen(true);
   }
   function openEdit(a: Appointment) {
     setEditingId(a.id);
     setForm({
-      type: a.type as AppointmentInput['type'], title: a.title, notes: a.notes || '',
+      type: a.type as AppointmentInput['type'], title: a.title, notes: a.notes || '', companyId: a.company_id || undefined,
       assigneeId: a.assignee_id || undefined, customerName: a.customer_name || '', customerEmail: a.customer_email || '',
       customerPhone: a.customer_phone || '', durationMinutes: a.duration_minutes, location: a.location || '',
-      meetingLink: a.meeting_link || '', sendInvite: false, date: dayKeyOf(a.start_at), time: timeOf(a.start_at),
+      meetingLink: a.meeting_link || '', managedTeams: Boolean(a.teams_meeting?.requested), sendInvite: false, date: dayKeyOf(a.start_at), time: timeOf(a.start_at),
     });
     setFormDirty(false); setFormErrors({});
     setDetail(null);
@@ -169,31 +179,30 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
     if (review.loading || review.error) { toast.error('Die Verfügbarkeit konnte noch nicht geprüft werden. Bitte erneut versuchen.'); return; }
     if (review.conflicts.length && !review.confirmed) { toast.error('Bitte die Terminüberschneidung prüfen und bestätigen.'); return; }
     const payload: AppointmentInput = {
-      type: form.type, title: form.title?.trim() || undefined, notes: form.notes, assigneeId: form.assigneeId,
+      type: form.type, title: form.title?.trim() || undefined, notes: form.notes, assigneeId: form.assigneeId || '', companyId: form.companyId,
       customerName: form.customerName?.trim(), customerEmail: form.customerEmail?.trim(), customerPhone: form.customerPhone?.trim(),
-      durationMinutes: form.durationMinutes, location: form.location?.trim(), meetingLink: form.meetingLink?.trim() ? safeWebsiteUrl(form.meetingLink) : undefined,
-      start: `${form.date}T${form.time}`, sendInvite: form.sendInvite,
+      durationMinutes: form.durationMinutes, location: form.location?.trim(), meetingLink: form.meetingLink?.trim() ? safeWebsiteUrl(form.meetingLink) : '',
+      start: `${form.date}T${form.time}`, sendInvite: form.sendInvite, createTeams: form.createTeams,
     };
     saveLock.current = true; setSaving(true);
     try {
       if (!(await review.verify())) { toast.error('Die Verfügbarkeit hat sich geändert. Bitte den Konflikt prüfen.'); return; }
-      if (editingId) {
-        const res = await updateAppointment(editingId, { ...payload, resendInvite: form.sendInvite });
-        if (res.calendarError) toast.warning(`Termin gespeichert, Teams-Synchronisierung ausstehend: ${res.calendarError}`);
-        else if (form.sendInvite && form.customerEmail && !res.inviteSent) toast.warning(`Termin aktualisiert. Einladung nicht versendet: ${res.inviteError || 'Bitte erneut versuchen.'}`);
-        else toast.success(res.calendarSynced ? 'Termin und Teams-Call aktualisiert.' : res.inviteSent ? 'Termin und Einladung aktualisiert.' : 'Termin aktualisiert.');
-        if (res.calendarDecision && !res.calendarDecision.eligible) toast.info('Kein Teams-Termin: Es wurde kein eindeutiger digitaler Kundentermin erkannt.');
+      const res = editingId
+        ? await updateAppointment(editingId, { ...payload, resendInvite: form.sendInvite })
+        : await createAppointment(payload);
+      const failedInvite = res.inviteError || (form.sendInvite && form.customerEmail && !res.inviteSent ? 'Bitte erneut versuchen.' : '');
+      setInviteError(failedInvite);
+      if (failedInvite) {
+        toast.warning('Termin gespeichert. Die Einladung konnte nicht versendet werden.');
+        setDetail(res.appointment);
       } else {
-        const res = await createAppointment(payload);
-        if (res.calendarError) toast.warning(`Termin angelegt, Teams-Synchronisierung ausstehend: ${res.calendarError}`);
-        else if (res.inviteSent) toast.success(res.calendarSynced ? 'Termin und Teams-Call angelegt · Einladung verschickt.' : 'Termin angelegt · Einladung an den Kunden verschickt.');
-        else if (form.sendInvite && form.customerEmail) toast.warning(`Termin angelegt, E-Mail nicht versendet: ${res.inviteError || 'unbekannt'}`);
-        else toast.success('Termin angelegt.');
-        if (res.calendarDecision && !res.calendarDecision.eligible) toast.info('Bewusst ohne Teams angelegt: kein eindeutiger digitaler Kundentermin erkannt.');
+        toast.success(res.inviteSent ? 'Termin gespeichert · Einladung per E-Mail verschickt.' : 'Termin gespeichert.');
+        if (res.appointment.teams_meeting?.requested) setDetail(res.appointment);
       }
       setCreateOpen(false);
       setFormDirty(false); setFormErrors({});
       setSelectedDay(form.date!);
+      setCursor(new Date(`${form.date}T12:00`));
       await load();
     } catch (e) {
       toast.error((e as Error)?.message || 'Speichern fehlgeschlagen.');
@@ -217,12 +226,21 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
     catch { toast.error('Löschen fehlgeschlagen.'); }
   }
   async function resend(a: Appointment) {
-    try { const r = await updateAppointment(a.id, { resendInvite: true }); toast.success(r.inviteSent ? 'Einladung erneut verschickt.' : 'Konnte nicht senden.'); await load(); }
-    catch { toast.error('Erneutes Senden fehlgeschlagen.'); }
+    if (resendLock.current) return;
+    resendLock.current = true; setResending(true); setInviteError('');
+    try {
+      const r = await updateAppointment(a.id, { resendInvite: Boolean(a.customer_email), ...(a.teams_meeting?.requested ? { createTeams: true } : {}) });
+      setDetail(r.appointment);
+      if (r.inviteSent) toast.success('Einladung per E-Mail verschickt.');
+      else if (r.calendarSynced && !a.customer_email) toast.success('Teams-Termin synchronisiert.');
+      else { setInviteError(r.inviteError || 'Bitte erneut versuchen.'); toast.error('Einladung konnte nicht versendet werden.'); }
+      await load();
+    } catch { setInviteError('Erneutes Senden fehlgeschlagen. Bitte erneut versuchen.'); toast.error('Erneutes Senden fehlgeschlagen.'); }
+    finally { resendLock.current = false; setResending(false); }
   }
   function copyLink(a: Appointment) {
     if (!a.public_token) return;
-    navigator.clipboard?.writeText(`https://partsunion.de/termin?t=${a.public_token}`).then(() => toast.success('Bestätigungs-Link kopiert.')).catch(() => undefined);
+    navigator.clipboard?.writeText(`https://partsunion.de/termin#t=${encodeURIComponent(a.public_token)}`).then(() => toast.success('Bestätigungs-Link kopiert.')).catch(() => undefined);
   }
   const moveCursor = (direction: number) => {
     const next = new Date(cursor);
@@ -232,7 +250,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
   };
 
   return (
-    <div className={cn(SEITEN_RAND, 'space-y-5')}>
+    <div className={cn(SEITEN_RAND, 'crm-calendar flex flex-col gap-3 pb-5 md:h-full md:min-h-0 md:overflow-hidden')}>
       <PageHeader
         title="Kalender"
         subtitle="Termine und Rückrufe koordinieren · Alle Uhrzeiten Europe/Berlin"
@@ -245,25 +263,34 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
               {admins.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
             <select aria-label="Kalender nach Status filtern" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={cn(inputSized, 'w-full sm:w-[170px]')}><option value="active">Aktive Termine</option><option value="all">Alle Status</option><option value="proposed">Vorgeschlagen</option><option value="confirmed">Bestätigt</option><option value="completed">Erledigt</option><option value="no_show">Nicht erschienen</option><option value="cancelled">Abgesagt</option></select>
-            <Button onClick={() => openCreate()}><Plus className="size-4" /> Neuer Termin</Button>
+            <Button variant="ghost" size="sm" onClick={()=>{setAssigneeFilter('all');setTeamFilter('all');setStatusFilter('active');}}>Filter zurücksetzen</Button><Button onClick={() => openCreate()}><Plus className="size-4" /> Neuer Termin</Button>
           </div>
         }
       />
 
-      {!loading && !loadError && <section aria-label="Kalenderlage im sichtbaren Zeitraum" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {lead && <section aria-label="Termin zum Lead planen" className="flex flex-col gap-3 rounded-md border border-border-subtle bg-surface px-4 py-3 lg:flex-row lg:items-center">
+        <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{lead.company}</p><p className="text-xs text-text-secondary">Kontaktdaten werden übernommen. Wähle einen freien Zeitpunkt im Kalender.</p></div>
+        <div className="flex flex-wrap items-center gap-2">
+        {onOpenLead && <Button variant="ghost" size="sm" onClick={() => onOpenLead(lead.id)}>Zurück zum Lead</Button>}
+        <Button size="sm" onClick={() => openCreate()}><Plus className="size-4" /> Termin für Lead planen</Button>
+        {onClearLead && <Button variant="ghost" size="sm" onClick={onClearLead}>Auswahl aufheben</Button>}
+        </div>
+      </section>}
+
+      {!loading && !loadError && <section aria-label="Kalenderlage im sichtbaren Zeitraum" className="crm-calendar-kpis grid grid-cols-2 sm:grid-cols-4">
         {[
           ['Aktiv', periodSummary.active, 'text-accent-500 bg-accent-500/10'],
           ['Bestätigt', periodSummary.confirmed, 'text-status-success bg-status-success/10'],
           ['Rückmeldung offen', periodSummary.proposed, 'text-status-warning bg-status-warning/10'],
           ['Ohne Zuständigkeit', periodSummary.unassigned, 'text-status-danger bg-status-danger/10'],
-        ].map(([label, value, tone]) => <div key={label} className="flex items-center justify-between gap-3 rounded-xl border border-border-subtle bg-surface px-3 py-2.5 shadow-sm"><span className="text-xs font-medium text-text-secondary">{label}</span><span className={cn('rounded-lg px-2 py-1 text-sm font-bold tabular-nums', tone as string)}>{value}</span></div>)}
+        ].map(([label, value, tone]) => <div key={label} className="flex items-center justify-between gap-3 border border-border-subtle bg-surface px-3 py-2.5"><span className="text-xs font-medium text-text-secondary">{label}</span><span className={cn('rounded-md px-2 py-1 text-sm font-bold tabular-nums', tone as string)}>{value}</span></div>)}
       </section>}
 
       {loadError && <LoadError message="Termine konnten nicht geladen werden." onRetry={() => void load()} />}
-      <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex rounded-md border border-border-subtle bg-surface p-1">{([{ id: 'day', label: 'Tag' }, { id: 'week', label: 'Woche' }, { id: 'month', label: 'Monat' }, { id: 'agenda', label: 'Agenda' }] as const).map((item) => <button key={item.id} aria-pressed={mode === item.id} onClick={() => setMode(item.id)} className={`rounded px-4 py-1.5 text-sm ${mode === item.id ? 'bg-elevated font-medium' : 'text-text-secondary'}`}>{item.label}</button>)}</div><p className="text-sm text-text-muted">Meeting-Links können hinterlegt werden. Microsoft-365-Synchronisierung ist nicht eingerichtet.</p></div>
-      <div className={cn("grid grid-cols-1 gap-5", mode === "month" && "xl:grid-cols-[minmax(0,1fr)_340px]")}>
+      <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex rounded-md border border-border-subtle bg-surface p-1">{([{ id: 'day', label: 'Tag' }, { id: 'week', label: 'Woche' }, { id: 'month', label: 'Monat' }, { id: 'agenda', label: 'Agenda' }] as const).map((item) => <button key={item.id} aria-pressed={mode === item.id} onClick={() => setMode(item.id)} className={`rounded px-4 py-1.5 text-sm ${mode === item.id ? 'bg-elevated font-medium' : 'text-text-secondary'}`}>{item.label}</button>)}</div><p className="text-xs text-text-muted">Termin öffnen, um Details und nächste Schritte zu bearbeiten.</p></div>
+      <div className={cn("grid grid-cols-1 gap-3 md:min-h-0 md:flex-1 xl:gap-5", mode === "month" && "xl:grid-cols-[minmax(0,1fr)_340px]")}>
         {/* Gitter */}
-        <Card className="overflow-auto">
+        <Card className="crm-calendar-surface overflow-hidden md:flex md:min-h-0 md:flex-col">
           <div className="flex items-center justify-between border-b border-border-subtle px-4 py-3">
             <div className="text-lg font-semibold text-text-primary">{MONTHS[cursor.getMonth()]} {cursor.getFullYear()}</div>
             <div className="flex items-center gap-1">
@@ -276,7 +303,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
           {mode === 'month' && <><div className="grid grid-cols-7 border-b border-border-subtle text-center text-xs font-medium text-text-muted">
             {WD.map((d) => <div key={d} className="py-2">{d}</div>)}
           </div>
-          <div className="grid grid-cols-7">
+          <div className="grid grid-cols-7 md:min-h-0 md:flex-1 md:auto-rows-fr">
             {grid.map((d, i) => {
               const k = toKey(d);
               const inMonth = d.getMonth() === cursor.getMonth();
@@ -289,7 +316,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
                   onClick={() => setSelectedDay(k)}
                   onDoubleClick={() => openCreate(k)}
                   className={cn(
-                    'border-b border-r border-border-subtle p-1.5 text-left align-top transition-colors', KALENDER_ZELLE,
+                    'min-h-[64px] overflow-hidden border-b border-r border-border-subtle p-1.5 text-left align-top transition-colors md:min-h-0',
                     i % 7 === 6 && 'border-r-0',
                     inMonth ? 'bg-transparent' : 'bg-canvas/50 text-text-muted',
                     isSel ? 'ring-2 ring-inset ring-accent-500/60' : 'hover:bg-elevated',
@@ -315,7 +342,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
             })}
           </div></>}
           {(mode === 'week' || mode === 'day') && <CalendarTimeGrid days={grid} byDay={byDay} today={todayKey} onOpen={setDetail} onCreate={(day, time) => { openCreate(day); setForm((current) => ({ ...current, time })); }} />}
-          {mode === 'agenda' && <div className="divide-y divide-border-subtle">
+          {mode === 'agenda' && <div className="min-h-0 flex-1 divide-y divide-border-subtle overflow-auto">
             {grid.map((day) => { const key = toKey(day); const rows = byDay[key] || []; return <section key={key} className="">
               <button onClick={() => setSelectedDay(key)} className={`w-full border-b border-border-subtle px-3 py-3 text-left text-sm ${key === todayKey ? 'bg-accent-500/10 text-accent-500' : 'bg-elevated/40'}`}><span className="font-medium">{day.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' })}</span><span className="ml-2 text-xs text-text-muted">{rows.length}</span></button>
               <div className="grid gap-2 p-3 md:grid-cols-2">{rows.map((a) => <button key={a.id} onClick={() => setDetail(a)} className={`rounded-md border border-border-subtle bg-surface p-2.5 text-left hover:border-accent-500 ${a.status === 'cancelled' ? 'opacity-50' : ''}`}><span className="block text-sm font-medium text-accent-500">{timeOf(a.start_at)}–{timeOf(a.end_at)}</span><span className="mt-1 block text-sm font-medium">{a.customer_name || a.title}</span><span className="mt-1 block text-xs text-text-muted">{a.assignee_name || 'Nicht zugewiesen'} · {STATUS_META[a.status]?.label}</span></button>)}{!rows.length && <p className="py-4 text-sm text-text-muted">Keine Termine</p>}<button onClick={() => openCreate(key)} className="flex items-center gap-1 py-2 text-sm text-text-muted hover:text-accent-500"><Plus className="size-3.5" /> Planen</button></div>
@@ -323,8 +350,9 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
           </div>}
         </Card>
 
-        {/* Tages-Panel */}
-        <Card className="overflow-hidden">
+        {/* Das Tagespanel gehört nur zur Monatsübersicht. In Tag und Woche
+            stand es bisher unter dem Raster und erzwang Seitenscrolling. */}
+        {mode === 'month' && <Card aria-label="Ausgewählter Tag" className="overflow-hidden md:flex md:min-h-0 md:flex-col">
           <div className="flex items-center justify-between border-b border-border-subtle px-4 py-3">
             <div>
               <div className="text-sm font-semibold text-text-primary">{WD[(selDate.getDay() + 6) % 7]}, {selDate.getDate()}. {MONTHS[selDate.getMonth()]}</div>
@@ -332,7 +360,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
             </div>
             <Button size="sm" variant="outline" onClick={() => openCreate(selectedDay)}><Plus className="size-4" /> Termin</Button>
           </div>
-          <div className="max-h-[560px] space-y-2 overflow-auto p-3">
+          <div className="min-h-0 flex-1 space-y-2 overflow-auto p-3">
             {selectedList.length === 0 ? (
               <div className="py-8"><EmptyState icon={<CalendarIcon className="size-5" />} title="Keine Termine" description="An diesem Tag ist nichts geplant." /></div>
             ) : selectedList.map((a) => {
@@ -399,7 +427,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
               );
             })}
           </div>
-        </Card>
+        </Card>}
       </div>
 
       {/* Create / Edit */}
@@ -408,7 +436,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
           open={createOpen}
           onClose={closeForm}
           title={editingId ? 'Termin bearbeiten' : 'Neuer Termin'}
-          subtitle="Mit Kunden-E-Mail wird automatisch eine Einladung verschickt."
+          subtitle="Auf Wunsch mit E-Mail-Einladung und Kalenderanhang."
           size="md"
           footer={
             <div className="flex justify-end gap-2">
@@ -431,7 +459,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
                 </select>
               </Field>
               <Field label="Zuständig">
-                <select value={form.assigneeId || ''} onChange={(e) => changeForm((f) => ({ ...f, assigneeId: e.target.value || undefined }))} className={inputSized}>
+                <select disabled={form.managedTeams} value={form.assigneeId || ''} onChange={(e) => changeForm((f) => ({ ...f, assigneeId: e.target.value || undefined, createTeams: !!f.createTeams && Boolean(admins.find(a => a.id === e.target.value)?.teamsAvailable) }))} className={inputSized}>
                   <option value="">— Niemand —</option>
                   {admins.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
@@ -455,11 +483,15 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
             <Field label="E-Mail (für die Einladung)"><input type="email" value={form.customerEmail || ''} aria-invalid={Boolean(formErrors.customerEmail)} placeholder="kunde@firma.de" onChange={(e) => changeForm((f) => ({ ...f, customerEmail: e.target.value }))} className={inputSized} />{formErrors.customerEmail && <p role="alert" className="mt-1 text-xs text-status-danger">{formErrors.customerEmail}</p>}</Field>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="Ort"><input value={form.location || ''} placeholder="Telefon / vor Ort" onChange={(e) => changeForm((f) => ({ ...f, location: e.target.value }))} className={inputSized} /></Field>
-              <Field label="Meeting-Link"><input value={form.meetingLink || ''} aria-invalid={Boolean(formErrors.meetingLink)} placeholder="https://meet…" onChange={(e) => changeForm((f) => ({ ...f, meetingLink: e.target.value }))} className={inputSized} />{formErrors.meetingLink && <p role="alert" className="mt-1 text-xs text-status-danger">{formErrors.meetingLink}</p>}</Field>
+              <Field label="Meeting-Link"><input disabled={form.createTeams || form.managedTeams} value={form.meetingLink || ''} aria-invalid={Boolean(formErrors.meetingLink)} placeholder={form.createTeams ? 'Wird beim Speichern erstellt' : 'https://meet…'} onChange={(e) => changeForm((f) => ({ ...f, meetingLink: e.target.value }))} className={inputSized} />{formErrors.meetingLink && <p role="alert" className="mt-1 text-xs text-status-danger">{formErrors.meetingLink}</p>}</Field>
             </div>
+            {form.managedTeams ? <p className="text-xs text-text-secondary">Mit Teams verbunden. Änderungen an Zeit und Titel werden im Kalender des Organisators übernommen.</p> : admins.find(a => a.id === form.assigneeId)?.teamsAvailable ? <label className="flex items-start gap-2 text-sm text-text-secondary">
+              <input type="checkbox" checked={!!form.createTeams} onChange={e => changeForm(f => ({ ...f, createTeams: e.target.checked, ...(e.target.checked ? { meetingLink: '' } : {}) }))} className="mt-0.5 size-4 shrink-0 accent-accent-500" />
+              <span>Teams-Besprechung automatisch erstellen<span className="mt-1 block text-xs text-text-muted">Im persönlichen Microsoft-Kalender. Der Kunde erhält den Beitrittslink in E-Mail und Kalenderanhang.</span></span>
+            </label> : <p className="text-xs text-text-muted">Für diese zuständige Person ist kein Teams-Kalender verbunden. Ein vorhandener Meeting-Link kann oben eingefügt werden.</p>}
             <Field label="Interne Notizen">
               <textarea rows={2} value={form.notes || ''} placeholder="z. B. Teams-Beratung / vor Ort / telefonischer Rückruf" onChange={(e) => changeForm((f) => ({ ...f, notes: e.target.value }))} className={cn(inputSized, 'h-auto py-2')} />
-              <p className="mt-1 text-xs text-text-muted">Ein vorhandener Teams- oder Videolink wird übernommen. Bei angebundener Kalenderintegration kann für eindeutig digitale Kundentermine automatisch ein Teams-Call erzeugt werden.</p>
+              <p className="mt-1 text-xs text-text-muted">Diese Notizen bleiben im CRM und werden nicht an den Kunden geschickt.</p>
             </Field>
             <AppointmentConflictReview review={review} />
             <label className="flex items-center gap-2 rounded-md border border-border-subtle bg-canvas p-2.5 text-sm text-text-secondary">
@@ -479,7 +511,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
         return (
           <Modal
             open={!!detail}
-            onClose={() => setDetail(null)}
+            onClose={() => { if (!resending) { setDetail(null); setInviteError(''); } }}
             title={
               <span className="flex items-center gap-2">
                 <span className={cn('rounded border px-1.5 py-0.5 text-[11px]', tm.chip)}>{tm.label}</span>
@@ -490,7 +522,7 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
             size="sm"
             footer={
               <div className="flex flex-wrap justify-end gap-2">
-                {meetingHref && <a href={meetingHref} target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center gap-2 rounded-md bg-accent-600 px-3 text-sm font-medium text-white transition-colors hover:bg-accent-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"><ExternalLink className="size-4" />Meeting öffnen</a>}
+                {meetingHref && detail.status !== 'cancelled' && detail.teams_meeting?.state !== 'failed' && <a href={meetingHref} target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center gap-2 rounded-md bg-accent-600 px-3 text-sm font-medium text-white transition-colors hover:bg-accent-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"><ExternalLink className="size-4" />{detail.teams_meeting?.requested ? 'Teams beitreten' : 'Meeting öffnen'}</a>}
                 {detail.company_id && onOpenLead && (
                   <Button size="sm" variant="outline" onClick={() => { setDetail(null); onOpenLead(detail.company_id!); }}>
                     <ExternalLink className="size-4" /> Lead öffnen
@@ -499,7 +531,8 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
                 {detail.status !== 'confirmed' && detail.status !== 'cancelled' && <Button size="sm" onClick={() => setStatus(detail, 'confirmed')}><CalendarCheck className="size-4" /> Bestätigen</Button>}
                 <Button size="sm" variant="outline" onClick={() => openEdit(detail)}><RotateCcw className="size-4" /> Verschieben</Button>
                 {detail.public_token && <Button size="sm" variant="outline" onClick={() => copyLink(detail)}><Link2 className="size-4" /> Link</Button>}
-                {detail.customer_email && detail.status !== 'cancelled' && <Button size="sm" variant="outline" onClick={() => resend(detail)}><Mail className="size-4" /> Erneut einladen</Button>}
+                {detail.customer_email && detail.status !== 'cancelled' && <Button size="sm" variant="outline" disabled={resending} onClick={() => resend(detail)}>{resending ? <Loader2 className="size-4 animate-spin" /> : <Mail className="size-4" />} {resending ? 'Wird versendet …' : detail.invite_sent_at ? 'Erneut einladen' : 'Einladung senden'}</Button>}
+                {!detail.customer_email && detail.teams_meeting?.state === 'failed' && <Button size="sm" variant="outline" disabled={resending} onClick={() => resend(detail)}>Teams synchronisieren</Button>}
                 {detail.status !== 'completed' && detail.status !== 'cancelled' && <Button size="sm" variant="outline" onClick={() => setStatus(detail, 'completed')}><CheckCircle2 className="size-4" /> Erledigt</Button>}
                 {detail.status !== 'no_show' && detail.status !== 'cancelled' && <Button size="sm" variant="outline" onClick={() => setStatus(detail, 'no_show')}><Ban className="size-4" /> No-Show</Button>}
                 {/* Absagen (mit Kundenmail) nur bei Kunden-Terminen; interne Slots: nur Löschen. */}
@@ -514,7 +547,9 @@ export function KalenderView({ onOpenLead }: { onOpenLead?: (leadId: string) => 
               {detail.customer_email && <Row icon={<Mail className="size-4" />} text={detail.customer_email} />}
               {detail.customer_phone && <Row icon={<Phone className="size-4" />} text={detail.customer_phone} />}
               {(detail.meeting_link || detail.location) && <Row icon={<MapPin className="size-4" />} text={detail.meeting_link || detail.location || ''} />}
-              {detail.invite_sent_at && <div className="text-xs text-text-muted">Einladung verschickt.</div>}
+              {inviteError && <p role="alert" className="rounded-md bg-status-danger/10 p-3 text-sm text-status-danger">Termin gespeichert, Einladung nicht versendet: {inviteError} Über „Einladung senden“ kannst du es erneut versuchen.</p>}
+              {!inviteError && detail.teams_meeting?.state === 'failed' && <p role="alert" className="rounded-md bg-status-danger/10 p-3 text-sm text-status-danger">Teams konnte nicht synchronisiert werden: {detail.teams_meeting.error} Bitte erneut synchronisieren oder einladen.</p>}
+              {detail.invite_sent_at && <div className="text-xs text-text-muted">Zuletzt per E-Mail verschickt: {new Date(detail.invite_sent_at).toLocaleString('de-DE', { timeZone: 'Europe/Berlin' })}.</div>}
               {detail.notes && <div className="rounded-md border border-border-subtle bg-canvas p-2.5 text-sm text-text-muted">{detail.notes}</div>}
             </div>
           </Modal>

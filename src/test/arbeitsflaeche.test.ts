@@ -106,7 +106,7 @@ describe('Aufbau der Arbeitsfläche', () => {
         // 80 px, die auf einem 13-Zoll-Bildschirm der Arbeitsflaeche fehlen.
         expect(kopf, 'die Kennzahlen stehen wieder fest im Kopf').not.toContain('<StatCard');
         expect(LEADS, 'die Leadliste soll keine dekorativen Kennzahlkarten mehr haben').not.toContain('<StatCard');
-        expect(LEADS.slice(LEADS.indexOf('cn(ARBEITSFLAECHE')), 'die Ergebnisanzahl fehlt').toContain('von ${leads.length} Leads');
+        expect(kopf, 'die kompakte Ergebnisanzahl fehlt').toContain("filteredLeads.length+' von '+leads.length+' Leads'");
     });
 
     it('der Seitenkopf zerdrueckt seinen Titel nicht', () => {
@@ -158,9 +158,9 @@ describe('Aufbau der Arbeitsfläche', () => {
         expect(TOPBAR).toContain("className={cn(WORKSPACE_HEADER,");
         const shell = readFileSync('src/app/components/layout/workspaceShell.ts', 'utf8');
         const header = shell.match(/WORKSPACE_HEADER = '([^']+)'/)?.[1] ?? '';
-        expect(header).toMatch(/\bh-14\b/);
+        expect(header).toContain('h-[60px]');
         const t = header.match(/py-([\d.]+)/);
         const innen = t ? Number(t[1]) * 4 * 2 : 0;
-        expect(innen + 36).toBeLessThanOrEqual(56);
+        expect(innen + 36).toBeLessThanOrEqual(60);
     });
 });

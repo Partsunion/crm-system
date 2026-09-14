@@ -34,4 +34,14 @@ describe('Result pages', () => {
     act(() => result.current.setSize(1000));
     expect(result.current.size).toBe(50);
   });
+  it('restores the current page after a remount without losing it during loading', () => {
+    sessionStorage.clear();
+    const first = renderHook(() => useResultPage(items, 'mine', {remember:'test'}));
+    act(() => first.result.current.setPage(3));
+    first.unmount();
+    const next = renderHook(({loading}) => useResultPage(loading ? [] : items, 'mine', {remember:'test', loading}), {initialProps:{loading:true}});
+    next.rerender({loading:false});
+    expect(next.result.current.page).toBe(3);
+    expect(next.result.current.rows[0]).toBe(50);
+  });
 });

@@ -1,9 +1,11 @@
-import { useAppointmentConflicts } from '../utils/useAppointmentConflicts';
-import { AppointmentConflictReview } from './AppointmentConflictReview';
+import { CallbackPlanner, useCallbackPlanner } from './CallbackPlanner';
+import { VoiceDictation } from './VoiceDictation';
 import { LoadError } from './LoadError';
 import { leadCategory } from '../utils/stages';
 import { safeWebsiteUrl } from '../utils/safeUrl';
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { CallButton, CallHistory, ActiveCallNote } from '../phone/PhoneUI';
+import { usePhone } from '../phone/context';
 import {
   Mail, Phone, User, Calendar, Edit, Trash2, Globe, MapPin, Tag as TagIcon,
   MessageSquare, PhoneCall, Video, FileText, CheckCircle, Clock, Rocket,
@@ -14,14 +16,16 @@ import { toast } from 'sonner';
 import {
   type Lead, type Activity, type ActivityType,
   getActivities, createActivity, updateActivity, deleteActivity, getStatusOptions, getCurrentUser,
-  getAppointments, createAppointment, updateAppointment, cancelAppointment, getAppointmentAdmins,
+  getAppointments, updateAppointment, cancelAppointment, getAppointmentAdmins,
   saveLead, type Appointment, type AppointmentAdmin,
 } from '../utils/storage';
-import { sendBrochure } from '../utils/brochure';
+import { LeadEmailComposer } from './LeadEmailComposer';
 import {
   Modal, Button, IconButton, Badge, StatusBadge, PriorityPill, EmptyState, SectionLabel, inputClass, cn,
 } from './ui-kit';
 import { CustomSelect } from './CustomSelect';
+import { mayLeaveWorkspace, useWorkspaceGuard } from '../utils/useWorkspaceGuard';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 const ADMIN_DASHBOARD_URL = (
   (import.meta.env as Record<string, string | undefined>).VITE_ADMIN_DASHBOARD_URL || 'https://admin.partsunion.de'
@@ -49,6 +53,8 @@ interface LeadDetailModalProps {
   onClose: () => void;
   onEdit: (lead: Lead) => void;
   onDelete: () => void;
+  /** Navigation callback handles the workspace's unsaved-change guard. */
+  onOpenCalendar?: (lead: Lead) => void;
   /** Wird nach Statuswechsel/Entscheider-Update aufgerufen, damit Liste/Pipeline neu lädt. */
   onLeadChanged?: () => void;
   /**
@@ -57,10 +63,12 @@ interface LeadDetailModalProps {
    * bedienbar, Zeilenklick wechselt den Lead im Panel (Remount via key).
    */
   variant?: 'modal' | 'panel';
+  navigation?: { index: number; total: number; previous?: () => void; next?: () => void };
 }
 
 /** Gemeinsame Hülle: Overlay-Modal ODER gedocktes Seitenpanel. */
 function Shell({
+  suspended,
   variant,
   onClose,
   title,
@@ -69,6 +77,7 @@ function Shell({
   footer,
   children,
 }: {
+  suspended?: boolean;
   variant: 'modal' | 'panel';
   onClose: () => void;
   title: React.ReactNode;
@@ -104,7 +113,7 @@ function Shell({
     );
   }
   return (
-    <Modal onClose={onClose} size="xl" title={title} subtitle={subtitle} headerAccessory={headerAccessory} footer={footer} bodyClassName="space-y-4">
+    <Modal open={!suspended} onClose={onClose} size="xl" title={title} subtitle={subtitle} headerAccessory={headerAccessory} footer={footer} bodyClassName="space-y-4">
       {children}
     </Modal>
   );
@@ -154,15 +163,6 @@ function isOverdue(iso: string): boolean {
   return iso.slice(0, 16) < `${dateKey(now)}T${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
 }
 
-/** Nächster sinnvoller Vorschlags-Slot: nächste volle Viertelstunde + 1 h. */
-function nextSlotTime(): string {
-  const d = new Date(Date.now() + 60 * 60000);
-  const q = Math.ceil(d.getMinutes() / 15) * 15;
-  d.setMinutes(q === 60 ? 0 : q);
-  if (q === 60) d.setHours(d.getHours() + 1);
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
-
 const CALL_TYPE_LABEL: Record<string, string> = { quali: 'Quali-Call', sales: 'Sales-Call', call: 'Rückruf', other: 'Termin' };
 
 function relTime(iso: string): string {
@@ -189,10 +189,12 @@ function initials(name: string): string {
   return (name || '?').split(/\s+/).map((s) => s[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || '?';
 }
 
-export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged, variant = 'modal' }: LeadDetailModalProps) {
+export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged, onOpenCalendar, variant = 'modal', navigation }: LeadDetailModalProps) {
   const currentUser = getCurrentUser();
+  const phone = usePhone();
+  const hasCallNote = phone?.opened && phone.call?.leadId === lead.id && phone.call?.userId === currentUser?.id;
   const currentName = currentUser?.username || currentUser?.name || '';
-  const isAdmin = ['admin', 'Admin', 'superadmin'].includes(String(currentUser?.role || ''));
+  const isAdmin = currentUser?.role === 'manager' || Boolean(currentUser?.app_access?.admin);
 
   // Lokale Spiegel: aktualisieren sich sofort nach einer Aktivität (vor Parent-Reload).
   const [status, setStatus] = useState(lead.status);
@@ -217,20 +219,14 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState('');
 
-  // ── Broschüren-Versand über Resend ──────────────────────────────────────
-  const [brochureSending, setBrochureSending] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailState, setEmailState] = useState({dirty:false,busy:false});
 
   // ── Geplante Anrufe / Rückrufe (echte Termine, verknüpft über companyId) ──
   const [appts, setAppts] = useState<Appointment[]>([]);
   const [admins, setAdmins] = useState<AppointmentAdmin[]>([]);
   const [planOpen, setPlanOpen] = useState(false);
-  const [planSaving, setPlanSaving] = useState(false);
-  const [planDate, setPlanDate] = useState(() => dateKey(new Date()));
-  const [planTime, setPlanTime] = useState(() => nextSlotTime());
-  const [planDuration, setPlanDuration] = useState(15);
-  const [planAssignee, setPlanAssignee] = useState('');
-  const [planNote, setPlanNote] = useState('');
-  const planReview = useAppointmentConflicts(planOpen, `${planDate}T${planTime}`, planDuration, planAssignee);
+  useWorkspaceGuard(Boolean(note.trim() || dmInput.trim() || reached !== null || moveTo !== status || editingId || emailState.dirty), saving || emailState.busy);
 
   const reload = useCallback(async () => {
     setLoading(true); setActivityError(false);
@@ -238,6 +234,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
   }, [lead.id]);
 
   useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => { const refresh = () => void reload(); window.addEventListener('crm:call-updated', refresh); return () => window.removeEventListener('crm:call-updated', refresh); }, [reload]);
 
   const reloadAppts = useCallback(async () => {
     setAppointmentError(false);
@@ -255,60 +252,10 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
     () => admins.find((a) => a.username?.toLowerCase() === (currentUser?.username || '').toLowerCase())?.id || '',
     [admins, currentUser],
   );
-  useEffect(() => { if (myAdminId) setPlanAssignee((prev) => prev || myAdminId); }, [myAdminId]);
-
-  const handleSendBrochure = async () => {
-    if (brochureSending) return;
-    setBrochureSending(true);
-    try {
-      const result = await sendBrochure(lead);
-      toast.success(`Broschüre an ${result.recipient} gesendet (${result.recipientSource}).`);
-      // The server records the confirmed send exactly once.
-      try {
-        await reload();
-        onLeadChanged?.();
-      } catch { /* Protokoll-Eintrag ist nicht kritisch */ }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Broschüre konnte nicht versendet werden.');
-    } finally {
-      setBrochureSending(false);
-    }
-  };
-
-  const scheduleCall = async () => {
-    if (planSaving) return;
-    if (!planAssignee) { toast.error('Bitte eine zuständige Person auswählen.'); return; }
-    if (planReview.loading || planReview.error) { toast.error('Bitte zuerst die Verfügbarkeit prüfen.'); return; }
-    if (!planDate || !planTime) { toast.error('Bitte Datum und Uhrzeit angeben.'); return; }
-    setPlanSaving(true);
-    try {
-      if (!(await planReview.verify())) { toast.error('Bitte die angezeigte Überschneidung prüfen.'); return; }
-      await createAppointment({
-        type: 'call',
-        companyId: lead.id,
-        customerName: lead.company,
-        customerPhone: lead.phone || lead.whatsappNumber || undefined,
-        assigneeId: planAssignee || undefined,
-        notes: planNote.trim() || undefined,
-        start: `${planDate}T${planTime}`,
-        durationMinutes: planDuration,
-        sendInvite: false, // interner Rückruf-Slot — Kunde bekommt KEINE Einladung
-      });
-      // Follow-up-Datum am Lead nachziehen (best effort, Liste/Dashboard bleiben konsistent).
-      try { await saveLead({ id: lead.id, nextFollowUpDate: planDate }); onLeadChanged?.(); } catch { toast.warning('Rückruf angelegt, aber das Follow-up-Datum konnte nicht aktualisiert werden. Bitte den Lead prüfen.'); }
-      setPlanOpen(false);
-      setPlanNote('');
-      await reloadAppts();
-      toast.success(`Anruf geplant: ${apptLabel(`${planDate}T${planTime}`)}`);
-    } catch (e: any) {
-      toast.error(e.message || 'Anruf konnte nicht geplant werden');
-    } finally {
-      setPlanSaving(false);
-    }
-  };
+  const callbackPlanner = useCallbackPlanner({leadId:lead.id,assigneeId:myAdminId,enabled:planOpen,onSaved:()=>{void reloadAppts();onLeadChanged?.();}});
 
   const completeAppt = async (a: Appointment) => {
-    try { await updateAppointment(a.id, { status: 'completed' }); await reloadAppts(); toast.success('Als erledigt markiert.'); }
+    try { await updateAppointment(a.id, { status: 'completed' }); await reloadAppts(); onLeadChanged?.(); toast.success('Als erledigt markiert.'); }
     catch (e: any) { toast.error(e.message || 'Fehlgeschlagen'); }
   };
   const removeAppt = async (a: Appointment) => {
@@ -316,9 +263,6 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
     try { await cancelAppointment(a.id); await reloadAppts(); toast.success('Anruf abgesagt.'); }
     catch (e: any) { toast.error(e.message || 'Absagen fehlgeschlagen'); }
   };
-
-  /** Datum-Schnellwahl: heute / morgen / übermorgen / +1 Woche. */
-  const datePreset = (days: number) => setPlanDate(dateKey(new Date(Date.now() + days * 864e5)));
 
   const stageChanged = !!moveTo && moveTo !== status;
 
@@ -372,23 +316,29 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
   const canModify = (a: Activity) => isAdmin || (!!currentName && a.createdByName === currentName);
 
   return (
-    <Shell
+    <><Shell
+      suspended={emailOpen}
       variant={variant}
-      onClose={onClose}
+      onClose={() => { if (mayLeaveWorkspace()) onClose(); }}
       title={lead.company}
       subtitle={lead.contactPerson}
       headerAccessory={
-        <Button variant="secondary" size="sm" onClick={() => onEdit(lead)}>
+        <Button variant="secondary" size="sm" onClick={() => { if (mayLeaveWorkspace()) onEdit(lead); }}>
           <Edit className="size-4" />
           <span className="hidden sm:inline">Stammdaten</span>
         </Button>
       }
       footer={
-        <div className="flex w-full items-center justify-between gap-2">
-          <Button variant="ghost" onClick={onDelete}>
+        <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          <Button variant="ghost" size="sm" onClick={() => { if (mayLeaveWorkspace()) onDelete(); }}>
             <Trash2 className="size-4" />
             Löschen
           </Button>
+          {navigation && <div className="ml-auto flex items-center gap-2" aria-label="Leads durchgehen">
+            <span className="text-xs tabular-nums text-text-muted">{navigation.index >= 0 ? (navigation.index + 1) + ' / ' + navigation.total : 'Außerhalb des Filters'}</span>
+            <IconButton aria-label="Vorheriger Lead" disabled={!navigation.previous || saving} onClick={navigation.previous}><ChevronLeft className="size-4"/></IconButton>
+            <Button variant="secondary" size="sm" disabled={!navigation.next || saving} onClick={navigation.next}>Nächster Lead<ChevronRight className="size-4"/></Button>
+          </div>}
           {currentUser?.app_access?.admin && leadCategory({ status }) === 'won' && (
             <button
               onClick={() => window.open(buildOnboardingHandoffUrl(lead), '_blank', 'noopener')}
@@ -414,18 +364,17 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
         )}
       </div>
 
-          {(lead.phone || lead.email) && (
-            <div className="flex gap-2">
+          {(lead.phone || lead.email || onOpenCalendar) && (
+            <div className="flex flex-wrap gap-2">
               {lead.phone && (
-                <a href={`tel:${lead.phone}`} className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-accent-500 px-3 text-sm font-medium text-white transition-colors hover:bg-accent-600">
-                  <Phone className="size-4" />Anrufen
-                </a>
+                <CallButton lead={lead} />
               )}
               {lead.email && (
-                <a href={`mailto:${lead.email}`} className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-elevated px-3 text-sm font-medium text-text-secondary ring-1 ring-inset ring-border-subtle transition-colors hover:text-text-primary">
+                <button type="button" onClick={()=>setEmailOpen(true)} className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-elevated px-3 text-sm font-medium text-text-secondary ring-1 ring-inset ring-border-subtle transition-colors hover:text-text-primary">
                   <Mail className="size-4" />E-Mail
-                </a>
+                </button>
               )}
+              {onOpenCalendar && <Button variant="secondary" size="sm" onClick={() => onOpenCalendar(lead)}><Calendar className="size-4" /> Zum Kalender</Button>}
             </div>
           )}
 
@@ -434,7 +383,8 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
         {/* ── Protokoll (Hauptbereich) — im Panel UNTER der Info-Karte ───── */}
         <div hidden={detailTab !== 'activity'} className="space-y-5">
           {/* Composer */}
-          <div className="rounded-md border border-border-subtle bg-surface p-4"><h3 className="mb-3 text-sm font-semibold">Aktivität erfassen</h3>
+          {hasCallNote && <ActiveCallNote />}
+          <div hidden={Boolean(hasCallNote)} className="rounded-md border border-border-subtle bg-surface p-4"><h3 className="mb-3 text-sm font-semibold">Aktivität erfassen</h3>
             <div className="mb-3 flex flex-wrap gap-1.5">
               {LOG_TYPES.map((t) => (
                 <button
@@ -461,6 +411,8 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
               placeholder="Wie lief das Gespräch? Was wurde besprochen, was sind die nächsten Schritte?…"
               className={cn(inputClass, 'resize-none py-2')}
             />
+
+            <VoiceDictation leadId={lead.id} disabled={saving||Boolean(phone?.live)} onText={text=>setNote(previous=>previous.trim()?previous+"\n\n"+text:text)}/>
 
             {/* Entscheider */}
             <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-canvas/60 p-2.5">
@@ -509,6 +461,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
                 <Loader2 className="size-4 animate-spin" />Protokoll wird geladen…
               </div>
             )}
+            <CallHistory key={lead.id} leadId={lead.id} />
             {!loading && activities.map((a) => {
               const meta = ACTIVITY_META[a.type] || ACTIVITY_META.note;
               const isEditing = editingId === a.id;
@@ -593,15 +546,12 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
 
           <button
             type="button"
-            onClick={() => void handleSendBrochure()}
+            onClick={() => setEmailOpen(true)}
             hidden={detailTab !== "info"}
-            disabled={brochureSending}
-            title="Broschüre an die gespeicherte E-Mail-Adresse senden"
+            title="Persönliche E-Mail an den Lead schreiben"
             className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-elevated px-3 text-sm font-medium text-text-secondary ring-1 ring-inset ring-border-subtle transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-text-secondary"
           >
-            {brochureSending
-              ? <><Loader2 className="size-4 animate-spin" />Adresse prüfen &amp; senden…</>
-              : <><FileText className="size-4" />Broschüre senden</>}
+            <Mail className="size-4" />E-Mail schreiben
           </button>
 
           {/* ── Geplante Anrufe / Rückrufe ─────────────────────────── */}
@@ -613,7 +563,8 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
               </span>
               <button
                 type="button"
-                onClick={() => setPlanOpen((o) => !o)}
+                hidden={planOpen}
+                onClick={() => setPlanOpen(true)}
                 className={cn(
                   'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset transition-colors',
                   planOpen
@@ -625,57 +576,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
               </button>
             </div>
 
-            {planOpen && (
-              <div className="mb-3 space-y-2 rounded-lg border border-border-subtle bg-canvas/60 p-2.5">
-                <div className="flex flex-wrap gap-1.5">
-                  {[
-                    { label: 'Heute', days: 0 },
-                    { label: 'Morgen', days: 1 },
-                    { label: 'Übermorgen', days: 2 },
-                    { label: '+1 Woche', days: 7 },
-                  ].map((p) => (
-                    <button
-                      key={p.label}
-                      type="button"
-                      onClick={() => datePreset(p.days)}
-                      className={cn(
-                        'rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ring-inset transition-colors',
-                        planDate === dateKey(new Date(Date.now() + p.days * 864e5))
-                          ? 'bg-accent-500 text-white ring-accent-500'
-                          : 'bg-canvas text-text-secondary ring-border-subtle hover:text-text-primary',
-                      )}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="grid grid-cols-[1fr_auto] gap-2">
-                  <input aria-label="Rückrufdatum" type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)} className={cn(inputClass, 'h-9')} />
-                  <input aria-label="Rückrufuhrzeit" type="time" value={planTime} onChange={(e) => setPlanTime(e.target.value)} className={cn(inputClass, 'h-9 w-[110px]')} />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <select aria-label="Rückrufdauer" value={String(planDuration)} onChange={(e) => setPlanDuration(Number(e.target.value))} className={cn(inputClass, 'h-9')}>
-                    {[10, 15, 30, 45, 60].map((d) => <option key={d} value={d}>{d} Min.</option>)}
-                  </select>
-                  <select aria-label="Rückrufzuständigkeit" value={planAssignee} onChange={(e) => setPlanAssignee(e.target.value)} className={cn(inputClass, 'h-9')}>
-                    <option value="">— Zuständig —</option>
-                    {admins.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                  </select>
-                </div>
-                <input
-                  value={planNote}
-                  onChange={(e) => setPlanNote(e.target.value)}
-                  placeholder="Worum geht's? (z. B. Rückruf wegen Angebot)"
-                  className={cn(inputClass, 'h-9')}
-                />
-                <AppointmentConflictReview review={planReview} />
-                <p className="text-sm text-text-muted">Alle Uhrzeiten Europe/Berlin. Die Prüfung umfasst nur CRM-Termine.</p>
-                <Button size="sm" className="w-full" onClick={scheduleCall} disabled={planSaving || planReview.loading || planReview.error}>
-                  {planSaving ? <Loader2 className="size-4 animate-spin" /> : <PhoneCall className="size-4" />}
-                  Rückruf planen
-                </Button>
-              </div>
-            )}
+            {planOpen && <CallbackPlanner controller={callbackPlanner} admins={admins} onClose={()=>setPlanOpen(false)}/>}
 
             {appts.length === 0 && !planOpen && !appointmentError && (
               <p className="py-1 text-xs text-text-muted">Kein Anruf geplant.</p>
@@ -758,7 +659,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
           </div>
         </div>
       </div>
-    </Shell>
+    </Shell>{emailOpen && <LeadEmailComposer leadId={lead.id} conversationNotes={(hasCallNote?phone?.notes?.text:note)||''} onState={setEmailState} onClose={()=>setEmailOpen(false)} onSent={()=>{void reload();onLeadChanged?.();}}/>}</>
   );
 }
 

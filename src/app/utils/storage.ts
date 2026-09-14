@@ -269,7 +269,7 @@ function setToken(token: string): void {
 }
 
 /** Authorization-Header für die Bot-API (leer, falls nicht eingeloggt). */
-function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+export function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
   const token = getToken();
   return { 'X-Partsunion-App': 'crm', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extra };
 }
@@ -1069,6 +1069,8 @@ export type AppointmentType = 'quali' | 'sales' | 'call' | 'other';
 export type AppointmentStatus = 'proposed' | 'confirmed' | 'declined' | 'cancelled' | 'completed' | 'no_show';
 
 export interface Appointment {
+  teams_meeting?: { requested?: boolean; state?: 'pending' | 'ready' | 'failed' | 'cancelled'; error?: string };
+  invitation_from?: string | null;
   id: string;
   type: string;
   title: string;
@@ -1094,9 +1096,10 @@ export interface Appointment {
   updated_at: string;
 }
 
-export interface AppointmentAdmin { id: string; username: string; name: string; email: string }
+export interface AppointmentAdmin { id: string; username: string; name: string; email: string; teamsAvailable?: boolean }
 
 export interface AppointmentInput {
+  createTeams?: boolean;
   type?: AppointmentType;
   title?: string;
   notes?: string;
@@ -1176,6 +1179,18 @@ export async function createAppointment(input: AppointmentInput): Promise<Appoin
   return await res.json();
 }
 
+export async function saveCrmCallback(leadId:string,id:string,input:{start:string;durationMinutes:number;assigneeId:string;notes:string}):Promise<AppointmentMutation>{
+  const response = await fetch(`${API_BASE_URL}/api/crm/workflow/leads/${encodeURIComponent(leadId)}/callbacks/${encodeURIComponent(id)}`, {
+    credentials: 'include',
+    method: 'PUT', headers: authHeaders({'Content-Type':'application/json'}), body: JSON.stringify(input),
+  });
+  const result = await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(result.error||'Der Rückruf konnte nicht gespeichert werden.');
+  vergessenMitPraefix('termine:');
+  vergessenMitPraefix('leads');
+  return result;
+}
+
 export async function updateAppointment(id: string, patch: AppointmentInput): Promise<AppointmentMutation> {
   // Jede Terminaenderung entwertet ALLE Zeitraeume — siehe vergessenMitPraefix.
   vergessenMitPraefix('termine:');
@@ -1186,7 +1201,11 @@ export async function updateAppointment(id: string, patch: AppointmentInput): Pr
     body: JSON.stringify(patch),
   });
   if (!res.ok) throw new Error('Termin konnte nicht aktualisiert werden');
-  return await res.json();
+  const result = await res.json();
+  // Completing a callback also updates its lead's next follow-up on the server.
+  vergessen(SCHLUESSEL.leads);
+  vergessenMitPraefix('termine:');
+  return result;
 }
 
 export async function cancelAppointment(id: string): Promise<void> {

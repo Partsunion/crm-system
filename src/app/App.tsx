@@ -3,7 +3,7 @@ import { WORKSPACE_FRAME } from './components/layout/workspaceShell';
 import { Login } from './components/Login';
 import { Sidebar, VIEW_LABELS, type ViewId } from './components/layout/Sidebar';
 import { Topbar } from './components/layout/Topbar';
-import { logout, getCurrentUser, validateSession, syncSettingsFromServer } from './utils/storage';
+import { logout, getCurrentUser, validateSession, syncSettingsFromServer, type Lead } from './utils/storage';
 import { AccountSecurity } from './components/AccountSecurity';
 import { AccountRecovery } from './components/AccountRecovery';
 import { VIEW_PATHS, viewFromPath } from './utils/navigation';
@@ -11,6 +11,8 @@ import { mayLeaveWorkspace } from './utils/useWorkspaceGuard';
 import { toast } from 'sonner';
 import { vergessen } from './utils/zwischenspeicher';
 import { ansichtenVorwaermen } from './vorwaermen';
+import { PhoneProvider } from './phone/PhoneProvider';
+import type { LeadWorkRequest } from './components/LeadsView';
 
 /**
  * Die Befehlspalette oeffnet erst auf ⌘K. Sie eager zu laden hiess: die
@@ -52,8 +54,10 @@ export default function App() {
   const historyIndex = useRef<number>(typeof window.history.state?.crmIndex === 'number' ? window.history.state.crmIndex : 0);
   const acceptedUrl = useRef(window.location.pathname + window.location.search + window.location.hash);
   const restoringHistory = useRef(false);
+  const [calendarLead, setCalendarLead] = useState<Lead | null>(null);
   const setActiveView = useCallback((view: ViewId): boolean => {
     if (!mayLeaveWorkspace()) return false;
+    setCalendarLead(null);
     const path = VIEW_PATHS[view];
     if (acceptedUrl.current !== path) window.history.pushState({ crmIndex: ++historyIndex.current }, '', path);
     acceptedUrl.current = path;
@@ -62,6 +66,7 @@ export default function App() {
   }, []);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingLeadAction, setPendingLeadAction] = useState<LeadAction>(null);
+  const [pendingWorkView, setPendingWorkView] = useState<LeadWorkRequest | null>(null);
   // Lead, der beim Wechsel auf die Leads-Ansicht direkt geöffnet werden soll
   // (Sprung aus Kalender/Tagesplan in die Lead-Maske).
   const [pendingLeadId, setPendingLeadId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('lead'));
@@ -121,7 +126,7 @@ export default function App() {
   useEffect(() => {
     if (!loggedIn) return;
     void syncSettingsFromServer().then((changed) => { if (changed) setRefreshTick((t) => t + 1); });
-    ansichtenVorwaermen();
+    return ansichtenVorwaermen();
   }, [loggedIn]);
 
   const handleRefresh = useCallback(async () => {
@@ -145,6 +150,10 @@ export default function App() {
   }, [setActiveView]);
 
   // ⌘K / Ctrl+K → Command Palette
+  const openCalendar = useCallback((lead: Lead) => {
+    if (setActiveView('kalender')) setCalendarLead(lead);
+  }, [setActiveView]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -167,6 +176,7 @@ export default function App() {
   };
 
   return (
+    <PhoneProvider user={currentUser} onOpenLead={openLead}>
     <div className={WORKSPACE_FRAME} data-workspace="crm">
       <a href="#crm-main-content" className="sr-only rounded-md bg-accent-600 px-3 py-2 text-sm text-white focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100]">Zum Hauptinhalt springen</a>
       <Sidebar
@@ -187,6 +197,7 @@ export default function App() {
           onNewLead={activeView === 'dashboard' ? () => triggerLeadAction('new') : undefined}
           onChangePassword={() => setActiveView('security')}
           onLogout={async () => {
+            if (!window.dispatchEvent(new Event('crm:logout-check', { cancelable: true }))) return;
             if (!mayLeaveWorkspace()) return;
             setLoggedIn(false);
             try { await logout(); } catch (e) { toast.error(e instanceof Error ? e.message : 'Abmelden fehlgeschlagen.'); }
@@ -206,19 +217,22 @@ export default function App() {
                 </div>
               }
             >
-              {activeView === 'dashboard' && <Dashboard onOpenKalender={() => setActiveView('kalender')} onOpenLead={openLead} onOpenLeads={() => setActiveView('leads')} />}
+              {activeView === 'dashboard' && <Dashboard onOpenKalender={() => setActiveView('kalender')} onOpenLead={openLead} onOpenLeads={(preset = 'all', options) => { if (setActiveView('leads')) setPendingWorkView({view:preset,...options}); }} />}
               {activeView === 'leads' && (
                 <LeadsView
                   pendingAction={pendingLeadAction}
+                  onOpenCalendar={openCalendar}
+                  pendingWorkView={pendingWorkView}
+                  onWorkViewHandled={() => setPendingWorkView(null)}
                   onPendingHandled={() => setPendingLeadAction(null)}
                   pendingLeadId={pendingLeadId}
                   onPendingLeadHandled={() => setPendingLeadId(null)}
                 />
               )}
-              {activeView === 'pipeline' && <PipelineView />}
+              {activeView === 'pipeline' && <PipelineView onOpenCalendar={openCalendar} />}
               {activeView === 'scraper' && <ScraperView />}
               {activeView === 'reports' && <ReportsView />}
-              {activeView === 'kalender' && <KalenderView onOpenLead={openLead} />}
+              {activeView === 'kalender' && <KalenderView onOpenLead={openLead} lead={calendarLead} onClearLead={() => setCalendarLead(null)} />}
               {activeView === 'settings' && <Settings />}
               {activeView === 'security' && <AccountSecurity onPasswordChanged={() => { setLoggedIn(false); setActiveView('dashboard'); }} />}
               {activeView === 'users' && <UserManagement />}
@@ -232,14 +246,15 @@ export default function App() {
           sehen sein — ein Ladehinweis mitten auf dem Bildschirm waere
           stoerender als die Palette einen Wimpernschlag spaeter. */}
       <Suspense fallback={null}>
-      <CommandPalette
+      {paletteOpen && <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         onNavigate={setActiveView}
         onNewLead={() => triggerLeadAction('new')}
         onImport={() => triggerLeadAction('import')}
-      />
+      />}
       </Suspense>
     </div>
+    </PhoneProvider>
   );
 }

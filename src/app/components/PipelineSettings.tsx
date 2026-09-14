@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { mayLeaveWorkspace, useWorkspaceGuard } from '../utils/useWorkspaceGuard';
 import { Plus, Edit, Trash2, ChevronUp, ChevronDown, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { einstellungenSichern } from '../utils/einstellungenSichern';
 import { stageCategory, type StageCategory } from '../utils/stages';
 import { getSettings, getLeads, type PipelineStage } from '../utils/storage';
 import {
-  Card, PageHeader, StatCard, Button, IconButton, Badge, Field, Modal, inputClass, cn, SEITEN_RAND,
+  Card, PageHeader, Button, IconButton, Badge, Field, Modal, inputClass, cn, SEITEN_RAND,
 } from './ui-kit';
 
 /** Farb-Swatches als HEX (dark-tauglich) — der `color`-Wert bleibt im Datenmodell. */
@@ -36,13 +37,20 @@ export function PipelineSettings() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingStage, setEditingStage] = useState<PipelineStage | null>(null);
   const [formData, setFormData] = useState({ name: '', color: 'blue', probability: 50, isActive: true, category: 'open' as StageCategory });
+  const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
+  const originalForm = editingStage
+    ? {name:editingStage.name, color:editingStage.color, probability:editingStage.probability, isActive:editingStage.isActive, category:stageCategory(editingStage)}
+    : {name:'', color:'blue', probability:50, isActive:true, category:'open'};
+  useWorkspaceGuard(isModalOpen && JSON.stringify(formData) !== JSON.stringify(originalForm), busy);
+  const closeEditor = () => { if (mayLeaveWorkspace()) setIsModalOpen(false); };
 
   useEffect(() => {
     loadStages();
   }, []);
 
   const loadStages = () => {
-    setStages(getSettings().pipelineStages.sort((a, b) => a.order - b.order));
+    setStages([...getSettings().pipelineStages].sort((a, b) => a.order - b.order));
   };
 
   const handleOpenModal = (stage?: PipelineStage) => {
@@ -56,7 +64,13 @@ export function PipelineSettings() {
     setIsModalOpen(true);
   };
 
-  const safeAction = async (action: () => Promise<void>) => { try { await action(); } catch (error) { toast.error(error instanceof Error ? error.message : 'Aktion fehlgeschlagen. Bitte erneut versuchen.'); } };
+  const safeAction = async (action: () => Promise<void>) => {
+    if (inFlight.current) return;
+    inFlight.current = true; setBusy(true);
+    try { await action(); }
+    catch (error) { toast.error(error instanceof Error ? error.message : 'Aktion fehlgeschlagen. Bitte erneut versuchen.'); }
+    finally { inFlight.current = false; setBusy(false); }
+  };
   const handleSave = async () => {
     if (!formData.name.trim()) {
       toast.error('Bitte geben Sie einen Namen ein.');
@@ -96,7 +110,7 @@ export function PipelineSettings() {
     if ((await getLeads()).some((lead) => lead.status === stage?.name)) { toast.error('Diese Phase enthält Leads. Verschiebe sie vor dem Löschen.'); return; }
     if (confirm('Möchten Sie diese Pipeline-Stage wirklich löschen?')) {
       const settings = getSettings();
-      void einstellungenSichern(
+      await einstellungenSichern(
         { ...settings, pipelineStages: settings.pipelineStages.filter((s) => s.id !== stageId) },
         'Stage gelöscht.',
       ).then(loadStages);
@@ -108,18 +122,18 @@ export function PipelineSettings() {
     const stage = settings.pipelineStages.find((item) => item.id === stageId);
     if (stage?.isActive && (await getLeads()).some((lead) => lead.status === stage.name)) { toast.error('Diese Phase enthält Leads und kann nicht deaktiviert werden.'); return; }
     const updated = settings.pipelineStages.map((s) => (s.id === stageId ? { ...s, isActive: !s.isActive } : s));
-    void einstellungenSichern({ ...settings, pipelineStages: updated },
+    await einstellungenSichern({ ...settings, pipelineStages: updated },
       'Stage umgeschaltet.').then(loadStages);
   };
 
-  const moveStage = (index: number, direction: 'up' | 'down') => {
+  const moveStage = async (index: number, direction: 'up' | 'down') => {
     const next = [...stages];
     const target = direction === 'up' ? index - 1 : index + 1;
     if (target < 0 || target >= next.length) return;
     [next[index], next[target]] = [next[target], next[index]];
     const updated = next.map((stage, idx) => ({ ...stage, order: idx + 1 }));
     const settings = getSettings();
-    void einstellungenSichern({ ...settings, pipelineStages: updated },
+    await einstellungenSichern({ ...settings, pipelineStages: updated },
       'Reihenfolge geändert.').then(loadStages);
   };
 
@@ -129,22 +143,22 @@ export function PipelineSettings() {
         title="Pipeline-Setup"
         subtitle="Verwalten Sie Ihre Pipeline-Phasen und deren Reihenfolge."
         actions={
-          <Button onClick={() => handleOpenModal()}>
+          <Button disabled={busy} onClick={() => handleOpenModal()}>
             <Plus className="size-4" />
-            Neue Stage
+            Neue Phase
           </Button>
         }
       />
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <StatCard label="Alle Stages" value={stages.length} />
-        <StatCard label="Aktiv" value={stages.filter((s) => s.isActive).length} />
-        <StatCard label="Inaktiv" value={stages.filter((s) => !s.isActive).length} />
+      <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-text-secondary">
+        <span><strong className="text-text-primary">{stages.length}</strong> Phasen</span>
+        <span>{stages.filter((s) => s.isActive).length} aktiv</span>
+        <span>{stages.filter((s) => !s.isActive).length} inaktiv</span>
       </div>
 
       <Card className="overflow-hidden">
         <div className="border-b border-border-subtle px-4 py-3">
-          <h3 className="font-medium text-text-primary">Pipeline-Stages</h3>
+          <h3 className="font-medium text-text-primary">Pipeline-Phasen</h3>
           <p className="mt-0.5 text-sm text-text-muted">
             Mit den Pfeilen ändern Sie die Reihenfolge der Phasen.
           </p>
@@ -160,16 +174,16 @@ export function PipelineSettings() {
             >
               <div className="flex flex-col">
                 <button
-                  onClick={() => moveStage(index, 'up')}
-                  disabled={index === 0}
+                  onClick={() => void safeAction(() => moveStage(index, 'up'))}
+                  disabled={busy || index === 0}
                   className="rounded p-0.5 text-text-muted transition-colors hover:bg-elevated-hover hover:text-text-primary disabled:opacity-30"
                   aria-label="Nach oben"
                 >
                   <ChevronUp className="size-4" />
                 </button>
                 <button
-                  onClick={() => moveStage(index, 'down')}
-                  disabled={index === stages.length - 1}
+                  onClick={() => void safeAction(() => moveStage(index, 'down'))}
+                  disabled={busy || index === stages.length - 1}
                   className="rounded p-0.5 text-text-muted transition-colors hover:bg-elevated-hover hover:text-text-primary disabled:opacity-30"
                   aria-label="Nach unten"
                 >
@@ -199,15 +213,16 @@ export function PipelineSettings() {
               <div className="flex items-center gap-1">
                 <IconButton
                   className="size-8"
+                  disabled={busy}
                   onClick={() => void safeAction(() => handleToggleActive(stage.id))}
                   title={stage.isActive ? 'Deaktivieren' : 'Aktivieren'}
                 >
                   {stage.isActive ? <X className="size-4" /> : <Check className="size-4" />}
                 </IconButton>
-                <IconButton className="size-8" onClick={() => handleOpenModal(stage)} aria-label="Bearbeiten">
+                <IconButton disabled={busy} className="size-8" onClick={() => handleOpenModal(stage)} aria-label="Bearbeiten">
                   <Edit className="size-4" />
                 </IconButton>
-                <IconButton className="size-8" tone="danger" onClick={() => void safeAction(() => handleDelete(stage.id))} aria-label="Löschen">
+                <IconButton disabled={busy} className="size-8" tone="danger" onClick={() => void safeAction(() => handleDelete(stage.id))} aria-label="Löschen">
                   <Trash2 className="size-4" />
                 </IconButton>
               </div>
@@ -218,21 +233,21 @@ export function PipelineSettings() {
 
       {isModalOpen && (
         <Modal
-          onClose={() => setIsModalOpen(false)}
-          title={editingStage ? 'Stage bearbeiten' : 'Neue Stage erstellen'}
+          onClose={closeEditor}
+          title={editingStage ? 'Phase bearbeiten' : 'Neue Phase erstellen'}
           subtitle="Definieren Sie eine Phase in Ihrer Verkaufs-Pipeline."
           footer={
             <>
-              <Button variant="secondary" onClick={() => setIsModalOpen(false)}>
+              <Button variant="secondary" disabled={busy} onClick={closeEditor}>
                 Abbrechen
               </Button>
-              <Button onClick={() => void safeAction(handleSave)}>{editingStage ? 'Speichern' : 'Stage erstellen'}</Button>
+              <Button disabled={busy} onClick={() => void safeAction(handleSave)}>{busy ? 'Speichert…' : editingStage ? 'Speichern' : 'Phase erstellen'}</Button>
             </>
           }
         >
-          <div className="space-y-5">
+          <fieldset disabled={busy} className="space-y-5">
             <Field label="Fachlicher Phasentyp" hint="Bleibt auch bei einer Umbenennung erhalten. Eine bereits verwendete Phase kann nicht umklassifiziert werden."><select className={inputClass} value={formData.category} onChange={(event) => setFormData({ ...formData, category: event.target.value as StageCategory })}><option value="open">Offen</option><option value="won">Gewonnen</option><option value="lost">Verloren</option></select></Field>
-            <Field label="Stage-Name" required>
+            <Field label="Name der Phase" required>
               <input
                 type="text"
                 value={formData.name}
@@ -291,9 +306,9 @@ export function PipelineSettings() {
                 onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
                 className="size-4 accent-[var(--accent-500)]"
               />
-              <span className="text-sm font-medium text-text-primary">Stage ist aktiv</span>
+              <span className="text-sm font-medium text-text-primary">Phase ist aktiv</span>
             </label>
-          </div>
+          </fieldset>
         </Modal>
       )}
     </div>
