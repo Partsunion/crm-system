@@ -2,3 +2,108 @@
 @source '../**/*.{js,ts,jsx,tsx}';
 
 @import 'tw-animate-css';
+
+/**
+ * `hell:` — greift NUR im Hellmodus.
+ *
+ * Fuer die Stellen mit festen Tailwind-Farben (Kalender-Terminarten,
+ * Statusfelder). Deren Toene sind konstant: auf dunklem Grund hell und
+ * lesbar, auf hellem Grund blasse Schrift auf blasser Toenung DERSELBEN
+ * Farbe — praktisch unsichtbar. So bleibt der dunkle Modus unveraendert
+ * und nur der helle bekommt einen dunkleren Ton.
+ *
+ * Gleichlautend mit Admin-Dashboard/tailwind.config.js.
+ */
+@custom-variant hell (&:is(.light *, [data-theme="light"] *));
+
+/* ────────────────────────────────────────────────────────────────────────
+ * Design tokens → Tailwind utilities (v4 @theme)
+ *
+ * Diese Tokens spiegeln 1:1 das Admin-Dashboard ("Industrial Precision",
+ * dark-only) und erzeugen genau dieselben semantischen Utility-Klassen wie
+ * dort: bg-surface, bg-elevated, border-border-subtle, text-text-primary,
+ * bg-accent-500, text-status-success … inkl. Opacity-Modifier (bg-surface/80).
+ *
+ * Werte sind als HEX gepflegt (dark), damit die /opacity-Modifier über
+ * color-mix zuverlässig funktionieren. Die rohen var(--bg-*)-Tokens in
+ * theme.css bleiben für Bestands-Code (var(--token)) gültig — eine Quelle,
+ * zwei Zugriffswege.
+ * ──────────────────────────────────────────────────────────────────────── */
+/* `@theme inline` (statt @theme): Werte werden DIREKT in die Utilities gesetzt,
+ * d. h. bg-surface → background: var(--bg-surface). Damit kaskadieren die
+ * Utilities über den [data-theme="light"]-Variablensatz in theme.css — der
+ * Light-/Dark-Umschalter funktioniert zur LAUFZEIT. Vorher standen hier HEX-
+ * Literale: die Utilities waren fest dunkel einkompiliert und der komplette
+ * Light-Block in theme.css war wirkungslos. Opacity-Modifier (bg-surface/80)
+ * laufen über color-mix mit var() und lösen im Browser korrekt auf. */
+@theme inline {
+  /* Auflage: Grundfarbe kippt zwischen Hell und Dunkel, die Deckung steht an
+     der Verwendungsstelle (bg-overlay/[0.045]). Siehe theme.css. */
+  --color-overlay: rgb(var(--overlay));
+  /* Schrift auf vollflächiger Statusfarbe — kippt mit dem Modus (theme.css). */
+  --color-auf-ton: var(--auf-ton);
+
+  /* Flächen & Linien */
+  --color-canvas: var(--bg-canvas);
+  --color-surface: var(--bg-surface);
+  --color-elevated: var(--bg-elevated);
+  --color-elevated-hover: var(--bg-elevated-hover);
+  --color-border: var(--border);
+  --color-border-subtle: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  /* Text — fünf Stufen aus dem Redesign */
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+
+  /* Accent — Deep Signal Blue */
+  --color-accent-50: var(--accent-50);
+  --color-accent-200: var(--accent-200);
+  --color-accent-400: var(--accent-400);
+  --color-accent-500: var(--accent-500);
+  --color-accent-600: var(--accent-600);
+  --color-accent-700: var(--accent-700);
+
+  /* Status */
+  --color-status-success: var(--success);
+  --color-status-warning: var(--warning);
+  --color-status-danger: var(--danger);
+  --color-status-info: var(--info);
+  --color-dealer-used: var(--dealer-used);
+  --color-dealer-used-foreground: var(--dealer-used-foreground);
+
+  /* Typografie — EINE Quelle: theme.css.
+   *
+   * Hier standen die Familien ausgeschrieben, also ein zweites Mal. Beim
+   * Umstellen auf die Schriften des Redesigns wäre diese Stelle stehen
+   * geblieben und `font-display` hätte weiter auf Inter gezeigt, das niemand
+   * mehr lädt. Genau so ist es im Admin-Dashboard passiert.
+   *
+   * Der Verweis auf sich selbst ist kein Zirkel: `@theme inline` gibt KEINE
+   * Variable aus, sondern setzt den Wert an der Verwendungsstelle ein — dort
+   * löst `var(--font-display)` gegen theme.css auf. Dieselbe Technik nutzen
+   * die Schatten unten schon. */
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
+  --font-mono: var(--font-mono);
+
+  /* Schatten (Tiefe — 1:1 Admin), themebar über theme.css. `inline` verhindert
+   * die Selbstreferenz (--shadow-xs: var(--shadow-xs) wäre sonst zyklisch). */
+  --shadow-xs: var(--shadow-xs);
+  --shadow-card: var(--shadow-card);
+  --shadow-card-hover: var(--shadow-card-hover);
+  --shadow-modal: var(--shadow-modal);
+
+  /* KPI-Schriftgrößen (1:1 Admin fontSize-Skala) */
+  --text-kpi: 2rem;
+  --text-kpi--line-height: 1.1;
+  --text-kpi--letter-spacing: -0.02em;
+  --text-kpi--font-weight: 600;
+  --text-kpi-sm: 1.5rem;
+  --text-kpi-sm--line-height: 1.2;
+  --text-kpi-sm--letter-spacing: -0.01em;
+  --text-kpi-sm--font-weight: 600;
+}

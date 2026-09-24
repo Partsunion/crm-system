@@ -1,328 +1,260 @@
-import { useState, useEffect } from 'react';
-import { Dashboard } from './components/Dashboard';
-import { LeadsView } from './components/LeadsView';
-import { PipelineView } from './components/PipelineView';
-import { Settings } from './components/Settings';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { WORKSPACE_FRAME } from './components/layout/workspaceShell';
 import { Login } from './components/Login';
-import { UserManagement } from './components/UserManagement';
-import { PipelineSettings } from './components/PipelineSettings';
+import { Sidebar, VIEW_LABELS, type ViewId } from './components/layout/Sidebar';
+import { Topbar } from './components/layout/Topbar';
+import { logout, getCurrentUser, validateSession, syncSettingsFromServer, type Lead } from './utils/storage';
+import { AccountSecurity } from './components/AccountSecurity';
+import { AccountRecovery } from './components/AccountRecovery';
+import { VIEW_PATHS, viewFromPath } from './utils/navigation';
+import { mayLeaveWorkspace } from './utils/useWorkspaceGuard';
+import { toast } from 'sonner';
+import { vergessen } from './utils/zwischenspeicher';
+import { ansichtenVorwaermen } from './vorwaermen';
+import { PhoneProvider } from './phone/PhoneProvider';
+import type { LeadWorkRequest } from './components/LeadsView';
 
-import { OutreachView } from './components/OutreachView';
-import { LayoutDashboard, Users, Workflow, Settings as SettingsIcon, Sparkles, Menu, X, LogOut, UserCog, Layers, Mail } from 'lucide-react';
-import { logout, getCurrentUser, restoreCrmSession, loadCrmSettings } from './utils/storage';
+/**
+ * Die Befehlspalette oeffnet erst auf ⌘K. Sie eager zu laden hiess: die
+ * Befehlspalette und cmdk beim Start mitzuziehen, fuer ein Fenster, das die
+ * meisten nie aufmachen. Die Einblendung selbst ist reines CSS.
+ */
+const CommandPalette = lazy(() =>
+  import('./components/CommandPalette').then(({ CommandPalette }) => ({ default: CommandPalette })),
+);
+
+const Dashboard = lazy(() => import('./components/Dashboard').then(({ Dashboard }) => ({ default: Dashboard })));
+const LeadsView = lazy(() => import('./components/LeadsView').then(({ LeadsView }) => ({ default: LeadsView })));
+const PipelineView = lazy(() =>
+  import('./components/PipelineView').then(({ PipelineView }) => ({ default: PipelineView })),
+);
+const ScraperView = lazy(() => import('./components/ScraperView').then(({ ScraperView }) => ({ default: ScraperView })));
+const ReportsView = lazy(() => import('./components/ReportsView').then(({ ReportsView }) => ({ default: ReportsView })));
+const KalenderView = lazy(() =>
+  import('./components/KalenderView').then(({ KalenderView }) => ({ default: KalenderView })),
+);
+const Settings = lazy(() => import('./components/Settings').then(({ Settings }) => ({ default: Settings })));
+const UserManagement = lazy(() =>
+  import('./components/UserManagement').then(({ UserManagement }) => ({ default: UserManagement })),
+);
+const PipelineSettings = lazy(() =>
+  import('./components/PipelineSettings').then(({ PipelineSettings }) => ({ default: PipelineSettings })),
+);
+
+export type LeadAction = 'new' | 'import' | null;
 
 export default function App() {
-  const [activeView, setActiveView] = useState<'dashboard' | 'leads' | 'pipeline' | 'outreach' | 'settings' | 'users' | 'pipelineSettings'>('dashboard');
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
+  const [activeView, updateActiveView] = useState<ViewId>(() => viewFromPath(window.location.pathname));
+  const mainRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    if (mainRef.current) { mainRef.current.scrollTop = 0; mainRef.current.scrollLeft = 0; }
+  }, [activeView]);
+  const [accountView, setAccountView] = useState(() => window.location.pathname === '/reset-password' || window.location.pathname === '/change-password');
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const historyIndex = useRef<number>(typeof window.history.state?.crmIndex === 'number' ? window.history.state.crmIndex : 0);
+  const acceptedUrl = useRef(window.location.pathname + window.location.search + window.location.hash);
+  const restoringHistory = useRef(false);
+  const [calendarLead, setCalendarLead] = useState<Lead | null>(null);
+  const setActiveView = useCallback((view: ViewId): boolean => {
+    if (!mayLeaveWorkspace()) return false;
+    setCalendarLead(null);
+    const path = VIEW_PATHS[view];
+    if (acceptedUrl.current !== path) window.history.pushState({ crmIndex: ++historyIndex.current }, '', path);
+    acceptedUrl.current = path;
+    updateActiveView(view); setMobileOpen(false);
+    return true;
+  }, []);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [pendingLeadAction, setPendingLeadAction] = useState<LeadAction>(null);
+  const [pendingWorkView, setPendingWorkView] = useState<LeadWorkRequest | null>(null);
+  // Lead, der beim Wechsel auf die Leads-Ansicht direkt geöffnet werden soll
+  // (Sprung aus Kalender/Tagesplan in die Lead-Maske).
+  const [pendingLeadId, setPendingLeadId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('lead'));
   const [loggedIn, setLoggedIn] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [sessionError, setSessionError] = useState(false);
+  // Bump erzwingt Remount der aktiven Ansicht → alle Daten + Settings frisch.
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const currentUser = getCurrentUser();
 
+  const checkSession = useCallback(async () => {
+    setSessionLoading(true); setSessionError(false);
+    try { const user = await validateSession(); setLoggedIn(Boolean(user)); }
+    catch { setSessionError(true); }
+    finally { setSessionLoading(false); }
+  }, []);
+  useEffect(() => { void checkSession(); }, [checkSession]);
   useEffect(() => {
-    let active = true;
-    void restoreCrmSession()
-      .then(async (user) => {
-        if (user) await loadCrmSettings();
-        if (active) setLoggedIn(Boolean(user));
-      })
-      .catch(() => { if (active) setLoggedIn(false); })
-      .finally(() => { if (active) setCheckingSession(false); });
-    return () => { active = false; };
+    window.history.replaceState({ ...window.history.state, crmIndex: historyIndex.current }, '', window.location.href);
+    const expired = () => setLoggedIn(false);
+    const back = () => {
+      if (restoringHistory.current) { restoringHistory.current = false; return; }
+      const nextIndex = typeof window.history.state?.crmIndex === 'number' ? window.history.state.crmIndex : null;
+      if (!mayLeaveWorkspace()) {
+        if (nextIndex !== null && nextIndex !== historyIndex.current) {
+          restoringHistory.current = true;
+          window.history.go(historyIndex.current - nextIndex);
+        } else {
+          window.history.pushState({ crmIndex: historyIndex.current }, '', acceptedUrl.current);
+        }
+        return;
+      }
+      historyIndex.current = nextIndex ?? historyIndex.current + 1;
+      acceptedUrl.current = window.location.pathname + window.location.search + window.location.hash;
+      window.history.replaceState({ ...window.history.state, crmIndex: historyIndex.current }, '', acceptedUrl.current);
+      updateActiveView(viewFromPath(window.location.pathname));
+      setAccountView(['/reset-password', '/change-password'].includes(window.location.pathname));
+      setPendingLeadId(new URLSearchParams(window.location.search).get('lead'));
+    };
+    window.addEventListener('crm:session-expired', expired); window.addEventListener('popstate', back);
+    return () => { window.removeEventListener('crm:session-expired', expired); window.removeEventListener('popstate', back); };
+  }, []);
+  useEffect(() => {
+    if (!loggedIn) return;
+    const revalidate = async () => {
+      if (document.visibilityState === 'hidden') return;
+      try { const user = await validateSession(); if (!user) setLoggedIn(false); else if (user.must_change_password) setAccountView(true); } catch { /* A transient offline state is not a session revocation. */ }
+    };
+    window.addEventListener('focus', revalidate);
+    const timer = window.setInterval(() => void revalidate(), 5 * 60_000);
+    return () => { window.removeEventListener('focus', revalidate); window.clearInterval(timer); };
+  }, [loggedIn]);
+
+  // Geteilte Einstellungen (Status/Pipeline/Quellen) beim Start vom Server holen —
+  // sonst sieht jeder Browser nur seinen eigenen localStorage-Stand.
+  useEffect(() => {
+    if (!loggedIn) return;
+    void syncSettingsFromServer().then((changed) => { if (changed) setRefreshTick((t) => t + 1); });
+    return ansichtenVorwaermen();
+  }, [loggedIn]);
+
+  const handleRefresh = useCallback(async () => {
+    if (!mayLeaveWorkspace()) return;
+    setRefreshing(true);
+    // ZUERST den Zwischenspeicher leeren, dann neu aufbauen. Andersherum
+    // baeke der Neuaufbau die eben gemerkten Daten wieder ein und der Knopf
+    // wuerde sich drehen, ohne irgendetwas zu holen.
+    vergessen();
+    try { await syncSettingsFromServer(); } finally {
+      setRefreshTick((t) => t + 1);
+      setRefreshing(false);
+    }
   }, []);
 
-  const handleNavigate = (view: 'dashboard' | 'leads' | 'pipeline' | 'outreach' | 'settings' | 'users' | 'pipelineSettings') => {
-    setActiveView(view);
-    setIsMobileMenuOpen(false);
+  const openLead = useCallback((leadId: string) => {
+    if (!setActiveView('leads')) return;
+    acceptedUrl.current = `/leads?lead=${encodeURIComponent(leadId)}`;
+    window.history.replaceState({ crmIndex: historyIndex.current }, '', acceptedUrl.current);
+    setPendingLeadId(leadId);
+  }, [setActiveView]);
+
+  // ⌘K / Ctrl+K → Command Palette
+  const openCalendar = useCallback((lead: Lead) => {
+    if (setActiveView('kalender')) setCalendarLead(lead);
+  }, [setActiveView]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  if (accountView || currentUser?.must_change_password) return <AccountRecovery forced={Boolean(currentUser?.must_change_password) || window.location.pathname === '/change-password'} onDone={() => { setAccountView(false); setLoggedIn(false); window.history.replaceState(null, '', '/'); }} />;
+  if (sessionLoading) return <main className="flex min-h-screen items-center justify-center bg-canvas text-sm text-text-secondary" role="status">Sitzung wird geprüft…</main>;
+  if (sessionError) return <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-canvas"><p>Die Sitzung konnte nicht geprüft werden.</p><button onClick={() => void checkSession()} className="rounded-md bg-accent-600 px-4 py-2 text-white">Erneut versuchen</button></main>;
+  if (!loggedIn) return <Login onLogin={() => setLoggedIn(true)} onReset={() => { window.history.pushState(null, '', '/reset-password'); setAccountView(true); }} />;
+
+  const triggerLeadAction = (action: Exclude<LeadAction, null>) => {
+    if (!setActiveView('leads')) return;
+    setPendingLeadAction(action);
   };
-
-  const handleLogout = async () => {
-    try {
-      await logout();
-    } finally {
-      setLoggedIn(false);
-    }
-  };
-
-  if (checkingSession) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-[#7c3aed] via-[#a78bfa] to-[#7c3aed] flex items-center justify-center text-white font-semibold">
-        Sitzung wird geprüft …
-      </div>
-    );
-  }
-
-  if (!loggedIn) {
-    return <Login onLogin={() => {
-      void loadCrmSettings()
-        .catch((error) => console.error('CRM-Einstellungen konnten nach dem Login nicht geladen werden:', error))
-        .finally(() => setLoggedIn(true));
-    }} />;
-  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-purple-50/20 to-gray-50">
-      {/* Header */}
-      <header className="bg-white/80 backdrop-blur-xl border-b border-gray-200/50 sticky top-0 z-40 shadow-sm">
-        <div className="px-4 md:px-8 py-3 md:py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 md:gap-4">
-              {/* Mobile Menu Toggle */}
-              <button
-                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                className="lg:hidden p-2 hover:bg-purple-50 rounded-xl transition-colors"
-              >
-                {isMobileMenuOpen ? (
-                  <X className="w-5 h-5 text-gray-700" />
-                ) : (
-                  <Menu className="w-5 h-5 text-gray-700" />
-                )}
-              </button>
+    <PhoneProvider user={currentUser} onOpenLead={openLead}>
+    <div className={WORKSPACE_FRAME} data-workspace="crm">
+      <a href="#crm-main-content" className="sr-only rounded-md bg-accent-600 px-3 py-2 text-sm text-white focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100]">Zum Hauptinhalt springen</a>
+      <Sidebar
+        activeView={activeView}
+        onNavigate={setActiveView}
+        mobileOpen={mobileOpen}
+        onMobileOpenChange={setMobileOpen}
+      />
 
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-[#7c3aed] to-[#a78bfa] rounded-xl flex items-center justify-center shadow-lg glow-purple">
-                  <Sparkles className="w-5 h-5 text-white" />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <Topbar
+          title={VIEW_LABELS[activeView]}
+          user={currentUser}
+          onOpenMobileSidebar={() => setMobileOpen(true)}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onRefresh={handleRefresh}
+          refreshing={refreshing}
+          onNewLead={activeView === 'dashboard' ? () => triggerLeadAction('new') : undefined}
+          onChangePassword={() => setActiveView('security')}
+          onLogout={async () => {
+            if (!window.dispatchEvent(new Event('crm:logout-check', { cancelable: true }))) return;
+            if (!mayLeaveWorkspace()) return;
+            setLoggedIn(false);
+            try { await logout(); } catch (e) { toast.error(e instanceof Error ? e.message : 'Abmelden fehlgeschlagen.'); }
+          }}
+        />
+
+        <main ref={mainRef} id="crm-main-content" className="flex-1 overflow-auto" role="main" tabIndex={-1}>
+          {/* Einblendung als CSS statt ueber die Bewegungsbibliothek — siehe
+              .ansicht-herein in premium.css. Der `key` bleibt: er sorgt fuer
+              den Neuaufbau beim Wechsel, und damit laeuft die Animation
+              ueberhaupt erst an. */}
+          <div key={`${activeView}:${refreshTick}`} className="ansicht-herein h-full">
+            <Suspense
+              fallback={
+                <div className="flex h-full min-h-48 items-center justify-center text-sm text-text-muted" role="status">
+                  Ansicht wird geladen…
                 </div>
-                <div>
-                  <h1 className="text-base md:text-lg font-bold bg-gradient-to-r from-gray-900 via-purple-900 to-gray-900 bg-clip-text text-transparent">PartsUnion CRM</h1>
-                  <p className="text-xs text-gray-500 hidden md:block">Autoteile · Outreach · Pipeline</p>
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 md:gap-3">
-              <div className="hidden sm:flex items-center gap-3 px-4 py-2.5 bg-gradient-to-r from-purple-50 to-transparent rounded-xl border border-purple-100">
-                <div className="w-8 h-8 bg-gradient-to-br from-[#7c3aed] to-[#a78bfa] rounded-lg flex items-center justify-center shadow-md">
-                  <span className="text-white font-bold text-sm">{currentUser?.name[0]}</span>
-                </div>
-                <div className="text-left">
-                  <p className="text-sm font-bold text-gray-900">{currentUser?.name}</p>
-                  <p className="text-xs text-purple-600 font-medium">{currentUser?.role}</p>
-                </div>
-              </div>
-              <button
-                onClick={() => void handleLogout()}
-                className="flex items-center gap-2 px-4 py-2.5 text-gray-600 hover:text-gray-900 hover:bg-gradient-to-r hover:from-red-50 hover:to-transparent rounded-xl transition-all border border-transparent hover:border-red-100"
-                title="Abmelden"
-              >
-                <LogOut className="w-4 h-4" />
-                <span className="hidden md:inline text-sm font-medium">Abmelden</span>
-              </button>
-            </div>
+              }
+            >
+              {activeView === 'dashboard' && <Dashboard onOpenKalender={() => setActiveView('kalender')} onOpenLead={openLead} onOpenLeads={(preset = 'all', options) => { if (setActiveView('leads')) setPendingWorkView({view:preset,...options}); }} />}
+              {activeView === 'leads' && (
+                <LeadsView
+                  pendingAction={pendingLeadAction}
+                  onOpenCalendar={openCalendar}
+                  pendingWorkView={pendingWorkView}
+                  onWorkViewHandled={() => setPendingWorkView(null)}
+                  onPendingHandled={() => setPendingLeadAction(null)}
+                  pendingLeadId={pendingLeadId}
+                  onPendingLeadHandled={() => setPendingLeadId(null)}
+                />
+              )}
+              {activeView === 'pipeline' && <PipelineView onOpenCalendar={openCalendar} />}
+              {activeView === 'scraper' && <ScraperView />}
+              {activeView === 'reports' && <ReportsView />}
+              {activeView === 'kalender' && <KalenderView onOpenLead={openLead} lead={calendarLead} onClearLead={() => setCalendarLead(null)} />}
+              {activeView === 'settings' && <Settings />}
+              {activeView === 'security' && <AccountSecurity onPasswordChanged={() => { setLoggedIn(false); setActiveView('dashboard'); }} />}
+              {activeView === 'users' && <UserManagement />}
+              {activeView === 'pipelineSettings' && (currentUser?.role === 'manager' || currentUser?.app_access?.admin ? <PipelineSettings /> : <div className="p-8 text-sm text-text-secondary">Pipeline-Einstellungen werden von der Vertriebsleitung verwaltet.</div>)}
+            </Suspense>
           </div>
-        </div>
-      </header>
-
-      <div className="flex h-[calc(100vh-57px)] md:h-[calc(100vh-73px)]">
-        {/* Mobile Overlay */}
-        {isMobileMenuOpen && (
-          <div
-            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-30 lg:hidden transition-opacity"
-            onClick={() => setIsMobileMenuOpen(false)}
-          />
-        )}
-
-        {/* Sidebar - Desktop with Hover */}
-        <aside
-          className={`
-            hidden lg:block relative
-            bg-white/80 backdrop-blur-xl border-r border-gray-200/50
-            transition-all duration-300 ease-in-out
-            ${isSidebarExpanded ? 'w-64' : 'w-20'}
-          `}
-          onMouseEnter={() => setIsSidebarExpanded(true)}
-          onMouseLeave={() => setIsSidebarExpanded(false)}
-        >
-          <nav className="p-4 space-y-2">
-            <button
-              onClick={() => handleNavigate('dashboard')}
-              className={`w-full flex items-center ${isSidebarExpanded ? 'gap-3' : 'justify-center'} px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'dashboard'
-                ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
-                : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
-                }`}
-              title={!isSidebarExpanded ? 'Dashboard' : ''}
-            >
-              <LayoutDashboard className="w-5 h-5 flex-shrink-0" />
-              {isSidebarExpanded && <span className="whitespace-nowrap">Dashboard</span>}
-            </button>
-            <button
-              onClick={() => handleNavigate('leads')}
-              className={`w-full flex items-center ${isSidebarExpanded ? 'gap-3' : 'justify-center'} px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'leads'
-                ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
-                : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
-                }`}
-              title={!isSidebarExpanded ? 'Leads' : ''}
-            >
-              <Users className="w-5 h-5 flex-shrink-0" />
-              {isSidebarExpanded && <span className="whitespace-nowrap">Leads</span>}
-            </button>
-            <button
-              onClick={() => handleNavigate('pipeline')}
-              className={`w-full flex items-center ${isSidebarExpanded ? 'gap-3' : 'justify-center'} px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'pipeline'
-                ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
-                : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
-                }`}
-              title={!isSidebarExpanded ? 'Pipeline' : ''}
-            >
-              <Workflow className="w-5 h-5 flex-shrink-0" />
-              {isSidebarExpanded && <span className="whitespace-nowrap">Pipeline</span>}
-            </button>
-
-            <button
-              onClick={() => handleNavigate('outreach')}
-              className={`w-full flex items-center ${isSidebarExpanded ? 'gap-3' : 'justify-center'} px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'outreach'
-                ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
-                : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
-                }`}
-              title={!isSidebarExpanded ? 'Outreach' : ''}
-            >
-              <Mail className="w-5 h-5 flex-shrink-0" />
-              {isSidebarExpanded && <span className="whitespace-nowrap">Outreach</span>}
-            </button>
-
-            {/* Divider */}
-            {isSidebarExpanded && (
-              <div className="pt-4 mt-4 border-t border-gray-200/50">
-                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-4 mb-2">Administration</p>
-              </div>
-            )}
-            {!isSidebarExpanded && (
-              <div className="pt-2 mt-2 border-t border-gray-200/50"></div>
-            )}
-
-            <button
-              onClick={() => handleNavigate('settings')}
-              className={`w-full flex items-center ${isSidebarExpanded ? 'gap-3' : 'justify-center'} px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'settings'
-                ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
-                : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
-                }`}
-              title={!isSidebarExpanded ? 'Einstellungen' : ''}
-            >
-              <SettingsIcon className="w-5 h-5 flex-shrink-0" />
-              {isSidebarExpanded && <span className="whitespace-nowrap">Einstellungen</span>}
-            </button>
-            <button
-              onClick={() => handleNavigate('users')}
-              className={`w-full flex items-center ${isSidebarExpanded ? 'gap-3' : 'justify-center'} px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'users'
-                ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
-                : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
-                }`}
-              title={!isSidebarExpanded ? 'Benutzerverwaltung' : ''}
-            >
-              <UserCog className="w-5 h-5 flex-shrink-0" />
-              {isSidebarExpanded && <span className="whitespace-nowrap">Benutzerverwaltung</span>}
-            </button>
-            <button
-              onClick={() => handleNavigate('pipelineSettings')}
-              className={`w-full flex items-center ${isSidebarExpanded ? 'gap-3' : 'justify-center'} px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'pipelineSettings'
-                ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
-                : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
-                }`}
-              title={!isSidebarExpanded ? 'Pipeline-Einstellungen' : ''}
-            >
-              <Layers className="w-5 h-5 flex-shrink-0" />
-              {isSidebarExpanded && <span className="whitespace-nowrap">Pipeline-Einstellungen</span>}
-            </button>
-          </nav>
-        </aside>
-
-        {/* Sidebar - Mobile */}
-        <aside className={`
-          fixed lg:hidden inset-y-0 left-0 z-40
-          w-64 bg-white/80 backdrop-blur-xl border-r border-gray-200/50
-          transform transition-transform duration-300 ease-out
-          ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
-          mt-[57px] md:mt-[73px]
-        `}>
-          <nav className="p-4 space-y-2">
-            <button
-              onClick={() => handleNavigate('dashboard')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'dashboard'
-                ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
-                : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
-                }`}
-            >
-              <LayoutDashboard className="w-5 h-5" />
-              <span>Dashboard</span>
-            </button>
-            <button
-              onClick={() => handleNavigate('leads')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'leads'
-                ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
-                : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
-                }`}
-            >
-              <Users className="w-5 h-5" />
-              <span>Leads</span>
-            </button>
-            <button
-              onClick={() => handleNavigate('pipeline')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'pipeline'
-                ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
-                : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
-                }`}
-            >
-              <Workflow className="w-5 h-5" />
-              <span>Pipeline</span>
-            </button>
-
-            <button
-              onClick={() => handleNavigate('outreach')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'outreach'
-                ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
-                : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
-                }`}
-            >
-              <Mail className="w-5 h-5" />
-              <span>Outreach</span>
-            </button>
-            <div className="pt-4 mt-4 border-t border-gray-200/50">
-              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider px-4 mb-2">Administration</p>
-              <button
-                onClick={() => handleNavigate('settings')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'settings'
-                  ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
-                  : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
-                  }`}
-              >
-                <SettingsIcon className="w-5 h-5" />
-                <span>Einstellungen</span>
-              </button>
-              <button
-                onClick={() => handleNavigate('users')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'users'
-                  ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
-                  : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
-                  }`}
-              >
-                <UserCog className="w-5 h-5" />
-                <span>Benutzerverwaltung</span>
-              </button>
-              <button
-                onClick={() => handleNavigate('pipelineSettings')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'pipelineSettings'
-                  ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
-                  : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
-                  }`}
-              >
-                <Layers className="w-5 h-5" />
-                <span>Pipeline-Einstellungen</span>
-              </button>
-            </div>
-          </nav>
-        </aside>
-
-        {/* Main Content */}
-        <main className="flex-1 overflow-auto">
-          {activeView === 'dashboard' && <Dashboard />}
-          {activeView === 'leads' && <LeadsView />}
-          {activeView === 'pipeline' && <PipelineView />}
-
-          {activeView === 'outreach' && <OutreachView />}
-          {activeView === 'settings' && <Settings />}
-          {activeView === 'users' && <UserManagement />}
-          {activeView === 'pipelineSettings' && <PipelineSettings />}
         </main>
       </div>
+
+      {/* Ohne Rueckfall-Anzeige: bis das Buendel da ist, soll gar nichts zu
+          sehen sein — ein Ladehinweis mitten auf dem Bildschirm waere
+          stoerender als die Palette einen Wimpernschlag spaeter. */}
+      <Suspense fallback={null}>
+      {paletteOpen && <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onNavigate={setActiveView}
+        onNewLead={() => triggerLeadAction('new')}
+        onImport={() => triggerLeadAction('import')}
+      />}
+      </Suspense>
     </div>
+    </PhoneProvider>
   );
 }

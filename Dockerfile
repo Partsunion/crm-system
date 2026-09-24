@@ -1,14 +1,14 @@
 # syntax=docker/dockerfile:1.6
 
 FROM node:22.23.2-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS builder
-WORKDIR /app
 
+WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund --no-progress
 
 COPY . .
 
-ARG VITE_API_BASE_URL
+ARG VITE_API_BASE_URL=https://api.partsunion.de
 ARG VITE_APP_VERSION=crm-system@unversioned
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
     VITE_APP_VERSION=$VITE_APP_VERSION
@@ -17,8 +17,8 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.30.4-alpine3.24@sha256:adf5042a17f4ecdd200c595fa9ffd1be37efb18f89a830bd1a00e4ab4d59d42c
 
-# Keep the digest-pinned trust anchor while applying Alpine security fixes
-# published after that base image was assembled.
+# Der Digest macht die Basis reproduzierbar; das Upgrade nimmt nachtraeglich
+# veroeffentlichte Alpine-Sicherheitskorrekturen mit.
 USER root
 RUN apk upgrade --no-cache
 

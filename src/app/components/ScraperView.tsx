@@ -1,523 +1,591 @@
+import { safeWebsiteUrl } from '../utils/safeUrl';
 import { useState, useEffect } from 'react';
-import { flushSync } from 'react-dom';
-import { Globe, Search, AlertCircle, CheckCircle2, Plus, Trash2, ExternalLink, Star, MapPin, Radar } from 'lucide-react';
-import { evaluateWebsite, startScraping, getScrapingStatus, startRadiusSearch } from '../utils/storage';
+import { Globe, Search, Radar, MapPin, Check, X, Phone, ExternalLink, Loader2, Download, ListChecks, GitMerge, AlertTriangle, Map } from 'lucide-react';
+import { toast } from 'sonner';
+import {
+  scraperSearch, importScraped, resolveDuplicates, getLeadLists, createLeadList, evaluateWebsite,
+  countryScrape, scraperJobStatus, cancelScraperJob,
+  type ScrapedCandidate, type LeadList, type ImportConflict, type DuplicateAction, type ScraperJobStatus,
+} from '../utils/storage';
+import { CustomSelect } from './CustomSelect';
+import { Badge, Button, Card, EmptyState, Modal, PageHeader, SEITEN_RAND, SectionLabel, cn, inputClass } from './ui-kit';
 
-// CSS Spinner component to avoid lucide-react insertBefore DOM errors
-const Spinner = ({ className = "w-5 h-5" }: { className?: string }) => (
-    <div
-        className={`${className} border-2 border-white/30 border-t-white rounded-full animate-spin`}
-        style={{ aspectRatio: '1' }}
-    />
-);
+// Branchen 1:1 zur Scraper-Backend-Logik (overpass.ts selectorsForNiche).
+const NICHES = ['Neuteilehändler', 'Gebrauchtteilehändler'];
 
-interface EvaluationResult {
-    action: string;
-    lead: {
-        id: string;
-        companyName: string;
-        websiteUrl: string;
-        designScore: number;
-        designAnalysis: string;
-        mobileResponsive: boolean;
-        phone?: string;
-    };
-    evaluation: {
-        score: number;
-        analysis: string;
-        mobileResponsive: boolean;
-        issues: string[];
-        suggestions: string[];
-    };
-}
+const NO_LIST = '— Keine Liste —';
 
-const NICHES = [
-    'Restaurant',
-    'Friseur',
-    'Handwerker',
-    'Anwalt',
-    'Arzt',
-    'Immobilien',
-    'Fitness',
-    'Kosmetik',
-    'Autowerkstatt',
-    'Einzelhandel',
-    'Hotel',
-    'Zahnärzte',
-    'Steuerberater',
-    'Fotografen',
-    'Sonstiges'
+// Länder für den „großen Scrape" (deckungsgleich mit cities.ts im Scraper-Service).
+const COUNTRIES: { code: string; label: string }[] = [
+  { code: 'DE', label: 'Deutschland' },
+  { code: 'AT', label: 'Österreich' },
+  { code: 'CH', label: 'Schweiz' },
+  { code: 'FR', label: 'Frankreich' },
+  { code: 'PL', label: 'Polen' },
 ];
 
 export function ScraperView() {
-    const [urls, setUrls] = useState<string[]>(['']);
-    const [niche, setNiche] = useState('Restaurant');
-    const [city, setCity] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [results, setResults] = useState<EvaluationResult[]>([]);
-    const [error, setError] = useState<string | null>(null);
-    const [jobId, setJobId] = useState<string | null>(null);
-    const [jobStatus, setJobStatus] = useState<{ status: string; processed: number; total: number } | null>(null);
+  const [tab, setTab] = useState<'radius' | 'country' | 'url'>('radius');
+  const [niche, setNiche] = useState('Neuteilehändler');
+  const [lists, setLists] = useState<LeadList[]>([]);
+  const [targetList, setTargetList] = useState<string>(NO_LIST);
 
-    // Tab state
-    const [activeTab, setActiveTab] = useState<'manual' | 'radius'>('manual');
+  // Umkreissuche
+  const [location, setLocation] = useState('');
+  const [searchCountryLabel, setSearchCountryLabel] = useState('Deutschland');
+  const [radiusKm, setRadiusKm] = useState(10);
+  const [searching, setSearching] = useState(false);
+  const [candidates, setCandidates] = useState<ScrapedCandidate[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [importing, setImporting] = useState(false);
+  const [searched, setSearched] = useState(false);
+  const [conflicts, setConflicts] = useState<ImportConflict[]>([]);
 
-    // Handle tab switch - clear job status first to prevent DOM conflicts
-    const handleTabSwitch = (newTab: 'manual' | 'radius') => {
-        if (newTab !== activeTab) {
-            // Use flushSync to force synchronous DOM update before tab switch
-            // This prevents removeChild errors by ensuring jobStatus elements are removed first
-            flushSync(() => {
-                setJobStatus(null);
-            });
-            setActiveTab(newTab);
+  // Großer Scrape (ganzes Land)
+  const [countryLabel, setCountryLabel] = useState('Deutschland');
+  const [countryRadius, setCountryRadius] = useState(25);
+  const [countryJobId, setCountryJobId] = useState<string | null>(null);
+  const [countryStatus, setCountryStatus] = useState<ScraperJobStatus | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [countryStarting, setCountryStarting] = useState(false);
+
+  // Einzelne URL
+  const [url, setUrl] = useState('');
+  const [urlBusy, setUrlBusy] = useState(false);
+  const [urlResult, setUrlResult] = useState<ScrapedCandidate | null>(null);
+
+  useEffect(() => { getLeadLists().then(setLists); }, []);
+
+  // Großen Scrape pollen, solange ein Job läuft (Fortschritt + Endmeldung).
+  useEffect(() => {
+    if (!countryJobId) return;
+    let stopped = false;
+    const tick = async () => {
+      try {
+        const s = await scraperJobStatus(countryJobId);
+        if (stopped) return;
+        setCountryStatus(s);
+        if (s.status === 'done' || s.status === 'error' || s.status === 'cancelled') {
+          if (s.status === 'done') toast.success(`Großer Scrape fertig: ${s.imported} neu, ${s.updated} aktualisiert (${s.found} gefunden).`);
+          else if (s.status === 'cancelled') toast.success(`Großer Scrape gestoppt — ${s.imported} bereits importierte Leads bleiben erhalten.`);
+          else toast.error(`Großer Scrape abgebrochen: ${s.error || 'Fehler'}`);
+          getLeadLists().then(setLists);
+          setCountryJobId(null);
+          setCancelling(false);
+          return;
         }
+      } catch { /* transient — weiter pollen */ }
+      if (!stopped) setTimeout(tick, 3000);
     };
+    const t = setTimeout(tick, 2500);
+    return () => { stopped = true; clearTimeout(t); };
+  }, [countryJobId]);
 
-    // Radius Search state
-    const [radiusLocation, setRadiusLocation] = useState('');
-    const [radiusKm, setRadiusKm] = useState(10);
-    const [scoreThreshold, setScoreThreshold] = useState(60);
+  const listIdForName = (name: string): string | null => {
+    if (name === NO_LIST) return null;
+    return lists.find((l) => l.name === name)?.id ?? null;
+  };
 
-    // Poll job status
-    useEffect(() => {
-        if (!jobId) return;
+  const handleSearch = async () => {
+    if (!location.trim()) { toast.error('Bitte einen Ort oder eine PLZ eingeben.'); return; }
+    setSearching(true);
+    setSearched(false);
+    setCandidates([]);
+    setSelected(new Set());
+    try {
+      const code = COUNTRIES.find((c) => c.label === searchCountryLabel)?.code || 'DE';
+      const found = await scraperSearch(location.trim(), radiusKm, niche, code);
+      setCandidates(found);
+      setSelected(new Set(found.map((c) => c.externalRef))); // standardmäßig alle ausgewählt
+      setSearched(true);
+      if (found.length === 0) toast.info('Keine Treffer in diesem Umkreis.');
+      else toast.success(`${found.length} Betriebe gefunden.`);
+    } catch (e: any) {
+      toast.error(e.message || 'Suche fehlgeschlagen');
+    } finally {
+      setSearching(false);
+    }
+  };
 
-        const interval = setInterval(async () => {
-            try {
-                const status = await getScrapingStatus(jobId);
-                setJobStatus(status);
+  const allSelected = candidates.length > 0 && candidates.every((c) => selected.has(c.externalRef));
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(candidates.map((c) => c.externalRef)));
+  const toggleOne = (ref: string) => setSelected((prev) => { const n = new Set(prev); if (n.has(ref)) n.delete(ref); else n.add(ref); return n; });
 
-                if (status.status === 'completed' || status.status === 'failed') {
-                    clearInterval(interval);
-                    setLoading(false);
+  const handleImport = async () => {
+    const chosen = candidates.filter((c) => selected.has(c.externalRef));
+    if (!chosen.length) { toast.error('Bitte mindestens einen Treffer auswählen.'); return; }
+    setImporting(true);
+    try {
+      const r = await importScraped(chosen, listIdForName(targetList));
+      const conf = r.conflicts || [];
+      const conflictRefs = new Set(conf.map((c) => c.candidate.externalRef));
+      const into = targetList === NO_LIST ? '' : ` → „${targetList}"`;
+      if (r.imported || r.updated) toast.success(`${r.imported} neu, ${r.updated} aktualisiert${into}.`);
+      // Erfolgreich importierte (ausgewählt & nicht in Konflikt) aus der Liste entfernen.
+      setCandidates((prev) => prev.filter((c) => !(selected.has(c.externalRef) && !conflictRefs.has(c.externalRef))));
+      setSelected((prev) => new Set([...prev].filter((ref) => conflictRefs.has(ref))));
+      getLeadLists().then(setLists);
+      if (conf.length) { setConflicts(conf); toast(`${conf.length} mögliche Dublette(n) — bitte entscheiden.`, { icon: '⚠️' }); }
+    } catch (e: any) {
+      toast.error(e.message || 'Import fehlgeschlagen');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const onConflictsResolved = (resolvedRefs: string[]) => {
+    const set = new Set(resolvedRefs);
+    setCandidates((prev) => prev.filter((c) => !set.has(c.externalRef)));
+    setSelected((prev) => new Set([...prev].filter((ref) => !set.has(ref))));
+    setConflicts([]);
+    getLeadLists().then(setLists);
+  };
+
+  const createList = async () => {
+    const name = window.prompt('Name der neuen Lead-Liste:');
+    if (!name?.trim()) return;
+    try {
+      const l = await createLeadList(name.trim());
+      if (l) { const updated = await getLeadLists(); setLists(updated); setTargetList(l.name); toast.success(`Liste „${l.name}" erstellt.`); }
+    } catch (e: any) { toast.error(e.message || 'Liste konnte nicht erstellt werden'); }
+  };
+
+  const startCountry = async () => {
+    const code = COUNTRIES.find((c) => c.label === countryLabel)?.code || 'DE';
+    setCountryStarting(true);
+    setCountryStatus(null);
+    setCountryJobId(null);
+    setCancelling(false);
+    try {
+      const { jobId, cities } = await countryScrape(code, niche, countryRadius);
+      setCountryStatus({ status: 'running', processed: 0, total: cities, imported: 0, updated: 0, found: 0 });
+      setCountryJobId(jobId); // startet das Polling (useEffect)
+      toast.success(`Großer Scrape gestartet — ${cities} Städte in ${countryLabel}.`);
+    } catch (e: any) {
+      toast.error(e.message || 'Großer Scrape konnte nicht gestartet werden');
+    } finally {
+      setCountryStarting(false);
+    }
+  };
+
+  const handleUrlCheck = async () => {
+    if (!url.trim()) return;
+    setUrlBusy(true);
+    setUrlResult(null);
+    try {
+      const res: any = await evaluateWebsite(url.trim(), niche);
+      const lead = res?.lead || {};
+      setUrlResult({
+        name: lead.companyName || url.trim(),
+        website: lead.websiteUrl || url.trim(),
+        phone: lead.phone,
+        email: lead.email,
+        externalRef: (lead.websiteUrl || url.trim()).replace(/^https?:\/\//, '').replace(/\/$/, ''),
+        sourceUrl: lead.websiteUrl || url.trim(),
+        niche,
+        dealerType: niche === 'Gebrauchtteilehändler' ? 'gebrauchtteile' : 'neuteile',
+        leadScore: res?.evaluation?.score,
+      });
+    } catch (e: any) {
+      toast.error(e.message || 'Prüfung fehlgeschlagen');
+    } finally {
+      setUrlBusy(false);
+    }
+  };
+
+  return (
+    <div className={cn(SEITEN_RAND, 'space-y-5')}>
+      <PageHeader
+        title="Lead-Scraper"
+        subtitle="Autoteilehändler per Region finden (OSM + Impressum), auswählen und als Leads ins CRM holen."
+      />
+
+      {/* Tabs */}
+      <div className="flex gap-1 border-b border-border-subtle">
+        {([['radius', Radar, 'Umkreissuche'], ['country', Map, 'Ganzes Land'], ['url', Globe, 'Einzelne URL']] as const).map(([key, Icon, label]) => (
+          <button key={key} type="button" onClick={() => setTab(key)}
+            className={cn('inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors',
+              tab === key ? 'border-b-2 border-accent-500 text-accent-500' : 'text-text-muted hover:text-text-primary')}>
+            <Icon className="size-4" />{label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'radius' && (
+        <>
+          {/* Suchformular */}
+          <Card className="p-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_180px_210px_160px_auto] md:items-end">
+              <div>
+                <SectionLabel className="mb-1.5 block">Region (Ort / PLZ)</SectionLabel>
+                <div className="relative">
+                  <MapPin className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-text-muted" />
+                  <input value={location} onChange={(e) => setLocation(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
+                    placeholder="z. B. Köln, München, 50667…"
+                    className={cn(inputClass, 'h-10 pl-9')} />
+                </div>
+              </div>
+              <div>
+                <SectionLabel className="mb-1.5 block">Land</SectionLabel>
+                <CustomSelect value={searchCountryLabel} onChange={setSearchCountryLabel} options={COUNTRIES.map((c) => c.label)} className="w-full" />
+              </div>
+              <div>
+                <SectionLabel className="mb-1.5 block">Branche</SectionLabel>
+                <CustomSelect value={niche} onChange={setNiche} options={NICHES} className="w-full" />
+              </div>
+              <div>
+                <SectionLabel className="mb-1.5 block">Umkreis: {radiusKm} km</SectionLabel>
+                <input type="range" min={1} max={50} value={radiusKm} onChange={(e) => setRadiusKm(parseInt(e.target.value))}
+                  className="h-10 w-full cursor-pointer accent-accent-500" />
+              </div>
+              <Button onClick={handleSearch} disabled={searching} className="h-10">
+                {searching ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
+                {searching ? 'Suche…' : 'Suchen'}
+              </Button>
+            </div>
+          </Card>
+
+          {/* Trefferliste */}
+          {candidates.length > 0 && (
+            <Card className="overflow-visible">
+              {/* Aktionsleiste */}
+              <div className="flex flex-wrap items-center gap-3 border-b border-border-subtle p-3">
+                <span className="text-sm text-text-secondary">
+                  <strong className="text-text-primary">{selected.size}</strong> von {candidates.length} ausgewählt
+                </span>
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-text-muted">Importieren in:</span>
+                  <CustomSelect value={targetList} onChange={setTargetList} options={[NO_LIST, ...lists.map((l) => l.name)]} className="w-44" />
+                  <Button size="sm" variant="ghost" onClick={createList}><ListChecks className="size-4" />Neue Liste</Button>
+                  <Button size="sm" onClick={handleImport} disabled={importing || selected.size === 0}>
+                    {importing ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+                    {importing ? 'Importiere…' : `${selected.size} importieren`}
+                  </Button>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border-subtle bg-elevated/50">
+                      <th className="w-10 px-4 py-3">
+                        <CheckBox checked={allSelected} onChange={toggleAll} ariaLabel="Alle auswählen" />
+                      </th>
+                      <th className="label-technical px-4 py-3 text-left text-text-muted">Firma</th>
+                      <th className="label-technical px-4 py-3 text-left text-text-muted">Telefon</th>
+                      <th className="label-technical px-4 py-3 text-left text-text-muted">Website</th>
+                      <th className="label-technical px-4 py-3 text-left text-text-muted">Adresse</th>
+                      <th className="label-technical px-4 py-3 text-center text-text-muted">Erfasste Kontaktdaten</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border-subtle">
+                    {candidates.map((c) => {
+                      const isSel = selected.has(c.externalRef);
+                      return (
+                        <tr key={c.externalRef} onClick={() => toggleOne(c.externalRef)}
+                          className={cn('cursor-pointer transition-colors hover:bg-elevated', isSel && 'bg-accent-500/5')}>
+                          <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                            <CheckBox checked={isSel} onChange={() => toggleOne(c.externalRef)} ariaLabel={`${c.name} auswählen`} />
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="font-medium text-text-primary">{c.name}</div>
+                            <div className="text-xs text-text-muted">{c.niche || ''}</div>
+                          </td>
+                          <td className="px-4 py-3">
+                            {c.phone ? <span className="inline-flex items-center gap-1 text-text-secondary"><Phone className="size-3" />{c.phone}</span> : <span className="text-text-muted">—</span>}
+                          </td>
+                          <td className="px-4 py-3">
+                            {c.website ? (
+                              <a href={safeWebsiteUrl(c.website)} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+                                className="inline-flex items-center gap-1 text-accent-500 hover:underline">
+                                {c.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}<ExternalLink className="size-3" />
+                              </a>
+                            ) : <span className="text-text-muted">—</span>}
+                          </td>
+                          <td className="px-4 py-3 text-text-secondary">{c.address || <span className="text-text-muted">—</span>}</td>
+                          <td className="px-4 py-3 text-center"><span className="text-sm text-text-secondary">{[c.phone && "Telefon", c.email && "E-Mail", c.website && "Website"].filter(Boolean).join(" · ") || "Kontakt fehlt"}<span className="mt-1 block text-xs text-text-muted">Noch nicht verifiziert</span></span></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="border-t border-border-subtle px-4 py-2 text-xs text-text-muted">
+                E-Mails werden beim Import automatisch aus dem Impressum der jeweiligen Website ergänzt.
+              </p>
+            </Card>
+          )}
+
+          {searched && candidates.length === 0 && !searching && (
+            <Card><EmptyState icon={<Radar className="size-5" />} title="Keine Treffer" description="Größeren Umkreis wählen oder eine andere Branche/Region probieren." /></Card>
+          )}
+          {!searched && !searching && (
+            <Card><EmptyState icon={<MapPin className="size-5" />} title="Region eingeben und suchen" description="Gib einen Ort oder eine PLZ ein — wir listen die Autoteilehändler im Umkreis auf. Du wählst aus, was ins CRM soll." /></Card>
+          )}
+        </>
+      )}
+
+      {/* ── Großer Scrape: ganzes Land ── */}
+      {tab === 'country' && (
+        <>
+          <Card className="p-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_200px_auto] md:items-end">
+              <div>
+                <SectionLabel className="mb-1.5 block">Land</SectionLabel>
+                <CustomSelect value={countryLabel} onChange={setCountryLabel} options={COUNTRIES.map((c) => c.label)} className="w-full" />
+              </div>
+              <div>
+                <SectionLabel className="mb-1.5 block">Branche</SectionLabel>
+                <CustomSelect value={niche} onChange={setNiche} options={NICHES} className="w-full" />
+              </div>
+              <div>
+                <SectionLabel className="mb-1.5 block">Umkreis je Stadt: {countryRadius} km</SectionLabel>
+                <input type="range" min={5} max={50} value={countryRadius} onChange={(e) => setCountryRadius(parseInt(e.target.value))}
+                  className="h-10 w-full cursor-pointer accent-accent-500" />
+              </div>
+              <Button onClick={startCountry} disabled={countryStarting || !!countryJobId} className="h-10">
+                {(countryStarting || countryJobId) ? <Loader2 className="size-4 animate-spin" /> : <Map className="size-4" />}
+                {countryJobId ? 'Läuft…' : countryStarting ? 'Starte…' : 'Land scrapen'}
+              </Button>
+            </div>
+            <p className="mt-3 text-xs text-text-muted">
+              Arbeitet das <strong className="text-text-secondary">ganze Land</strong> Stadt für Stadt ab: pro Stadt werden die Treffer geladen, sofort ins CRM übernommen und erst dann die nächste Stadt abgefragt (schont das Limit). Dubletten werden landesweit automatisch entfernt; die Leads erscheinen <strong className="text-text-secondary">laufend</strong> unter Leads → Scraping. Ein ganzes Land dauert einige Minuten — du kannst die Seite zwischendurch zumachen, der Lauf läuft im Hintergrund weiter.
+            </p>
+          </Card>
+
+          {countryStatus ? (
+            <CountryProgress
+              status={countryStatus}
+              cancelling={cancelling}
+              onCancel={async () => {
+                if (!countryJobId) return;
+                setCancelling(true);
+                try {
+                  await cancelScraperJob(countryJobId);
+                  toast.info('Stopp angefordert — der Lauf endet nach der aktuellen Stadt.');
+                } catch (e: any) {
+                  toast.error(e?.message || 'Job konnte nicht gestoppt werden');
+                  setCancelling(false);
                 }
-            } catch (err) {
-                console.error('Error polling job status:', err);
-            }
-        }, 2000);
+              }}
+            />
+          ) : (
+            <Card><EmptyState icon={<Map className="size-5" />} title="Landesweiter Scrape" description="Wähle ein Land und starte — wir arbeiten die Top-Städte automatisch ab und sammeln alle Händler in einer Gesamtliste. Das dauert je nach Land einige Minuten." /></Card>
+          )}
+        </>
+      )}
 
-        return () => clearInterval(interval);
-    }, [jobId]);
-
-    const addUrl = () => {
-        setUrls([...urls, '']);
-    };
-
-    const removeUrl = (index: number) => {
-        setUrls(urls.filter((_, i) => i !== index));
-    };
-
-    const updateUrl = (index: number, value: string) => {
-        const newUrls = [...urls];
-        newUrls[index] = value;
-        setUrls(newUrls);
-    };
-
-    const handleEvaluateSingle = async (url: string) => {
-        if (!url) return;
-
-        setLoading(true);
-        setError(null);
-
-        try {
-            const result = await evaluateWebsite(url, niche, undefined, city);
-            setResults(prev => [result, ...prev]);
-        } catch (err: unknown) {
-            setError(err.message || 'Fehler bei der Bewertung');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleEvaluateAll = async () => {
-        const validUrls = urls.filter(u => u.trim());
-        if (validUrls.length === 0) {
-            setError('Bitte mindestens eine URL eingeben');
-            return;
-        }
-
-        setLoading(true);
-        setError(null);
-        setResults([]);
-
-        try {
-            const response = await startScraping(validUrls, niche, city);
-            setJobId(response.jobId);
-        } catch (err: unknown) {
-            setError(err.message || 'Fehler beim Starten des Scrapings');
-            setLoading(false);
-        }
-    };
-
-    const handleRadiusSearch = async () => {
-        if (!radiusLocation.trim()) {
-            setError('Bitte einen Standort eingeben');
-            return;
-        }
-
-        setLoading(true);
-        setError(null);
-        setResults([]);
-        setJobStatus(null);
-
-        try {
-            const response = await startRadiusSearch(radiusLocation, radiusKm, niche, scoreThreshold);
-            setJobId(response.jobId);
-        } catch (err: unknown) {
-            setError(err.message || 'Fehler bei der Umkreissuche');
-            setLoading(false);
-        }
-    };
-
-    const getScoreColor = (score: number | undefined) => {
-        if (!score) return 'bg-gray-300';
-        if (score >= 70) return 'bg-green-500';
-        if (score >= 50) return 'bg-yellow-500';
-        if (score >= 30) return 'bg-orange-500';
-        return 'bg-red-500';
-    };
-
-    const getScoreLabel = (score: number | undefined) => {
-        if (!score) return 'N/A';
-        if (score >= 70) return 'Gut';
-        if (score >= 50) return 'Mittel';
-        if (score >= 30) return 'Schwach';
-        return 'Schlecht';
-    };
-
-    return (
-        <div className="p-4 md:p-8 space-y-6">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <div>
-                    <h2 className="text-2xl font-bold text-gray-900">Website Scraper</h2>
-                    <p className="text-gray-500 mt-1">Websites analysieren und potenzielle Leads finden</p>
+      {/* ── Einzelne URL ── */}
+      {tab === 'url' && (
+        <Card className="p-4">
+          <SectionLabel className="mb-1.5 block">Website-URL prüfen</SectionLabel>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleUrlCheck(); }}
+              placeholder="https://beispiel.de" className={cn(inputClass, 'h-10 flex-1')} />
+            <Button onClick={handleUrlCheck} disabled={urlBusy || !url.trim()} className="h-10">
+              {urlBusy ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}{urlBusy ? 'Prüfe…' : 'Prüfen'}
+            </Button>
+          </div>
+          {urlResult && (
+            <div className="mt-4 rounded-md border border-border-subtle bg-elevated/40 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-medium text-text-primary">{urlResult.name}</div>
+                  {urlResult.email && <div className="text-sm text-text-secondary">{urlResult.email}</div>}
+                  {urlResult.phone && <div className="text-sm text-text-secondary">{urlResult.phone}</div>}
                 </div>
-            </div>
-
-            {/* Tab Navigation */}
-            <div className="flex gap-2 border-b border-gray-200">
-                <button
-                    onClick={() => handleTabSwitch('manual')}
-                    className={`px-4 py-3 font-medium transition-all ${activeTab === 'manual'
-                        ? 'text-purple-600 border-b-2 border-purple-600'
-                        : 'text-gray-500 hover:text-gray-700'
-                        }`}
-                >
-                    <div className="flex items-center gap-2">
-                        <Globe className="w-4 h-4" />
-                        Manuelle URLs
-                    </div>
-                </button>
-                <button
-                    onClick={() => handleTabSwitch('radius')}
-                    className={`px-4 py-3 font-medium transition-all ${activeTab === 'radius'
-                        ? 'text-purple-600 border-b-2 border-purple-600'
-                        : 'text-gray-500 hover:text-gray-700'
-                        }`}
-                >
-                    <div className="flex items-center gap-2">
-                        <Radar className="w-4 h-4" />
-                        Umkreissuche
-                    </div>
-                </button>
-            </div>
-
-            {/* Input Section - key forces complete re-render on tab switch to prevent DOM conflicts */}
-            <div key={activeTab} className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 space-y-4">
-                {/* Niche Selection - shared for both tabs */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">Nische</label>
-                        <div className="relative">
-                            <select
-                                value={niche}
-                                onChange={(e) => setNiche(e.target.value)}
-                                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 bg-white appearance-none cursor-pointer text-gray-900 font-medium pr-10 hover:border-purple-300 transition-colors"
-                            >
-                                {NICHES.map(n => (
-                                    <option key={n} value={n}>{n}</option>
-                                ))}
-                            </select>
-                            <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
-                                <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                </svg>
-                            </div>
-                        </div>
-                    </div>
-
-                    {activeTab === 'manual' ? (
-                        <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-2">Stadt/Region (optional)</label>
-                            <input
-                                type="text"
-                                value={city}
-                                onChange={(e) => setCity(e.target.value)}
-                                placeholder="z.B. Berlin, München..."
-                                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                            />
-                        </div>
-                    ) : (
-                        <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-2">
-                                <MapPin className="w-4 h-4 inline mr-1" />
-                                Standort
-                            </label>
-                            <input
-                                type="text"
-                                value={radiusLocation}
-                                onChange={(e) => setRadiusLocation(e.target.value)}
-                                placeholder="z.B. 10115 Berlin, München Zentrum..."
-                                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                            />
-                        </div>
-                    )}
+                <div className="flex items-center gap-2">
+                  <Badge tone="neutral">{urlResult.phone || urlResult.email ? "Kontaktweg erfasst" : "Kontakt fehlt"}</Badge>
+                  <Button size="sm" onClick={async () => {
+                    try { const r = await importScraped([urlResult], listIdForName(targetList)); toast.success(`${r.imported} importiert.`); setUrlResult(null); }
+                    catch (e: any) { toast.error(e.message || 'Import fehlgeschlagen'); }
+                  }}><Download className="size-4" />Als Lead importieren</Button>
                 </div>
-
-                {/* Tab-specific content */}
-                {activeTab === 'manual' ? (
-                    <>
-                        {/* URL Inputs */}
-                        <div className="space-y-3">
-                            <label className="block text-sm font-semibold text-gray-700">Website URLs</label>
-                            {urls.map((url, index) => (
-                                <div key={index} className="flex gap-2">
-                                    <input
-                                        type="url"
-                                        value={url}
-                                        onChange={(e) => updateUrl(index, e.target.value)}
-                                        placeholder="https://beispiel.de"
-                                        className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                                    />
-                                    <button
-                                        onClick={() => handleEvaluateSingle(url)}
-                                        disabled={loading || !url.trim()}
-                                        className="px-4 py-3 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-xl hover:shadow-lg transition-all disabled:opacity-50"
-                                    >
-                                        <Search className="w-5 h-5" />
-                                    </button>
-                                    {urls.length > 1 && (
-                                        <button
-                                            onClick={() => removeUrl(index)}
-                                            className="px-4 py-3 text-red-600 hover:bg-red-50 rounded-xl transition-all"
-                                        >
-                                            <Trash2 className="w-5 h-5" />
-                                        </button>
-                                    )}
-                                </div>
-                            ))}
-                            <button
-                                onClick={addUrl}
-                                className="flex items-center gap-2 px-4 py-2 text-purple-600 hover:bg-purple-50 rounded-xl transition-all"
-                            >
-                                <Plus className="w-4 h-4" />
-                                Weitere URL hinzufügen
-                            </button>
-                        </div>
-
-                        {/* Action Button for Manual */}
-                        <div className="flex gap-4 pt-4 border-t border-gray-100">
-                            <button
-                                onClick={loading ? undefined : handleEvaluateAll}
-                                disabled={loading || urls.every(u => !u.trim())}
-                                className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-xl font-semibold transition-all ${loading ? 'opacity-50' : 'hover:shadow-lg'} disabled:opacity-50`}
-                            >
-                                {loading ? (
-                                    <>
-                                        <Spinner />
-                                        <span>Analysiere...</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <Globe className="w-5 h-5" />
-                                        <span>Alle analysieren</span>
-                                    </>
-                                )}
-                            </button>
-                        </div>
-                    </>
-                ) : (
-                    <>
-                        {/* Radius Search Options */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                                    Radius: {radiusKm} km
-                                </label>
-                                <input
-                                    type="range"
-                                    min="1"
-                                    max="50"
-                                    value={radiusKm}
-                                    onChange={(e) => setRadiusKm(parseInt(e.target.value))}
-                                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-purple-600"
-                                />
-                                <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                    <span>1 km</span>
-                                    <span>25 km</span>
-                                    <span>50 km</span>
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                                    Score-Schwelle: unter {scoreThreshold}
-                                </label>
-                                <input
-                                    type="range"
-                                    min="10"
-                                    max="90"
-                                    step="5"
-                                    value={scoreThreshold}
-                                    onChange={(e) => setScoreThreshold(parseInt(e.target.value))}
-                                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-purple-600"
-                                />
-                                <p className="text-xs text-gray-500 mt-1">
-                                    Nur Websites mit Score unter {scoreThreshold} werden als Leads gespeichert
-                                </p>
-                            </div>
-                        </div>
-
-                        {/* Info Box */}
-                        <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
-                            <p className="text-sm text-blue-800">
-                                <strong>So funktioniert's:</strong> Die Umkreissuche findet automatisch {niche}-Businesses im Umkreis von {radiusKm}km um "{radiusLocation || 'deinen Standort'}". Websites mit einem Design-Score unter {scoreThreshold} werden als potenzielle Leads gespeichert.
-                            </p>
-                        </div>
-
-                        {/* Action Button for Radius Search */}
-                        <div className="flex gap-4 pt-4 border-t border-gray-100">
-                            <button
-                                onClick={loading ? undefined : handleRadiusSearch}
-                                disabled={loading || !radiusLocation.trim()}
-                                className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-xl font-semibold transition-all ${loading ? 'opacity-50' : 'hover:shadow-lg'} disabled:opacity-50`}
-                            >
-                                {loading ? (
-                                    <>
-                                        <Spinner />
-                                        <span>Suche läuft...</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <Radar className="w-5 h-5" />
-                                        <span>Umkreissuche starten</span>
-                                    </>
-                                )}
-                            </button>
-                        </div>
-                    </>
-                )}
-
-                {/* Job Status */}
-                {jobStatus && (
-                    <div className="p-4 bg-purple-50 rounded-xl">
-                        <div className="flex items-center gap-3">
-                            <span className="w-5 h-5 flex items-center justify-center">
-                                {jobStatus.status === 'running' ? (
-                                    <Spinner className="w-5 h-5 border-purple-600 border-t-purple-600" />
-                                ) : (
-                                    /* CSS-based checkmark to avoid Lucide DOM issues */
-                                    <div className="w-5 h-5 rounded-full bg-green-600 flex items-center justify-center">
-                                        <div className="w-2 h-3 border-r-2 border-b-2 border-white transform rotate-45 -translate-y-0.5" />
-                                    </div>
-                                )}
-                            </span>
-                            <span className="font-medium text-gray-900">
-                                {jobStatus.status === 'running' ? 'Verarbeite' : 'Abgeschlossen'}: {jobStatus.processed} / {jobStatus.total}
-                            </span>
-                        </div>
-                        <div className="mt-2 bg-gray-200 rounded-full h-2 overflow-hidden">
-                            <div
-                                className="bg-purple-600 h-full transition-all duration-500"
-                                style={{ width: `${(jobStatus.processed / jobStatus.total) * 100}%` }}
-                            />
-                        </div>
-                    </div>
-                )}
-
-                {/* Error */}
-                {error && (
-                    <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
-                        <AlertCircle className="w-5 h-5 text-red-600" />
-                        <span className="text-red-600">{error}</span>
-                    </div>
-                )}
+              </div>
             </div>
+          )}
+        </Card>
+      )}
 
-            {/* Results */}
-            {results.length > 0 && (
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-                    <div className="p-4 border-b border-gray-200">
-                        <h3 className="font-semibold text-gray-900">Bewertungsergebnisse ({results.length})</h3>
-                    </div>
+      {conflicts.length > 0 && (
+        <DuplicateModal
+          conflicts={conflicts}
+          targetListName={targetList === NO_LIST ? null : targetList}
+          targetListId={listIdForName(targetList)}
+          onClose={() => setConflicts([])}
+          onResolved={onConflictsResolved}
+        />
+      )}
+    </div>
+  );
+}
 
-                    <div className="divide-y divide-gray-100">
-                        {results.map((result, index) => (
-                            <div key={index} className="p-4 hover:bg-gray-50 transition-colors">
-                                <div className="flex items-start justify-between gap-4">
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-3">
-                                            <h4 className="font-semibold text-gray-900 truncate">
-                                                {result.lead.companyName}
-                                            </h4>
-                                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium text-white ${getScoreColor(result.evaluation.score)}`}>
-                                                {result.evaluation.score}/100
-                                            </span>
-                                            <span className="text-sm text-gray-500">
-                                                {getScoreLabel(result.evaluation.score)}
-                                            </span>
-                                        </div>
+/* ── Dubletten-Auflösung ──────────────────────────────────────────────── */
+function DuplicateModal({ conflicts, targetListName, targetListId, onClose, onResolved }: {
+  conflicts: ImportConflict[];
+  targetListName: string | null;
+  targetListId: string | null;
+  onClose: () => void;
+  onResolved: (resolvedRefs: string[]) => void;
+}) {
+  // Default 'merge' = sicherste Wahl (füllt nur leere Felder, verliert nichts).
+  const [actions, setActions] = useState<Record<string, DuplicateAction>>(
+    () => Object.fromEntries(conflicts.map((c) => [c.candidate.externalRef, 'merge' as DuplicateAction])),
+  );
+  const [busy, setBusy] = useState(false);
+  const setAll = (a: DuplicateAction) => setActions(Object.fromEntries(conflicts.map((c) => [c.candidate.externalRef, a])));
+  const MATCH_LABEL: Record<string, string> = { domain: 'gleiche Website', email: 'gleiche E-Mail', phone: 'gleiche Telefonnummer' };
 
-                                        <a
-                                            href={result.lead.websiteUrl}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="flex items-center gap-1 text-sm text-purple-600 hover:underline mt-1"
-                                        >
-                                            {result.lead.websiteUrl}
-                                            <ExternalLink className="w-3 h-3" />
-                                        </a>
+  const apply = async () => {
+    setBusy(true);
+    try {
+      const resolutions = conflicts.map((c) => ({ candidate: c.candidate, existingId: c.existing.id, action: actions[c.candidate.externalRef] || 'merge' }));
+      const r = await resolveDuplicates(resolutions, targetListId);
+      toast.success(`Dubletten verarbeitet: ${r.overwritten} überschrieben · ${r.merged} zusammengeführt · ${r.kept} behalten.`);
+      onResolved(conflicts.map((c) => c.candidate.externalRef));
+    } catch (e: any) {
+      toast.error(e.message || 'Auflösung fehlgeschlagen');
+    } finally {
+      setBusy(false);
+    }
+  };
 
-                                        {result.lead.phone && (
-                                            <p className="text-sm text-gray-600 mt-1">📞 {result.lead.phone}</p>
-                                        )}
+  const ACTS: { key: DuplicateAction; label: string }[] = [
+    { key: 'keep', label: 'Bestehenden behalten' },
+    { key: 'merge', label: 'Zusammenführen' },
+    { key: 'overwrite', label: 'Neuen übernehmen' },
+  ];
 
-                                        <p className="text-sm text-gray-600 mt-2">{result.evaluation.analysis}</p>
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="xl"
+      title="Mögliche Dubletten gefunden"
+      subtitle={`${conflicts.length} Treffer passen zu bestehenden Leads. Wähle pro Eintrag, was übernommen werden soll — es entsteht KEIN doppelter Datensatz.`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>Abbrechen</Button>
+          <Button onClick={apply} disabled={busy}>
+            {busy ? <Loader2 className="size-4 animate-spin" /> : <GitMerge className="size-4" />}
+            {busy ? 'Wende an…' : 'Entscheidung übernehmen'}
+          </Button>
+        </>
+      }
+    >
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-text-muted">Für alle:</span>
+        {ACTS.map((a) => (
+          <button key={a.key} type="button" onClick={() => setAll(a.key)}
+            className="rounded-md border border-border-subtle bg-elevated px-2 py-1 text-text-secondary transition-colors hover:border-border-strong hover:text-text-primary">
+            {a.label}
+          </button>
+        ))}
+        {targetListName && <span className="ml-auto text-text-muted">Ziel-Liste: „{targetListName}"</span>}
+      </div>
 
-                                        <div className="flex items-center gap-4 mt-2 text-sm">
-                                            <span className={result.evaluation.mobileResponsive ? 'text-green-600' : 'text-red-600'}>
-                                                {result.evaluation.mobileResponsive ? '✓ Mobile optimiert' : '✗ Nicht mobile optimiert'}
-                                            </span>
-                                        </div>
+      <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1">
+        {conflicts.map((c) => {
+          const act = actions[c.candidate.externalRef] || 'merge';
+          return (
+            <div key={c.candidate.externalRef} className="rounded-md border border-border-subtle bg-elevated/40 p-3">
+              <div className="mb-2 flex items-center gap-2">
+                <AlertTriangle className="size-4 text-status-warning" />
+                <span className="text-sm font-medium text-text-primary">{c.candidate.name}</span>
+                <Badge tone="warning">{MATCH_LABEL[c.matchedBy] || c.matchedBy}</Badge>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <ConflictCol title="Neu (gescrapt)" tone="accent" data={{ company: c.candidate.name, email: c.candidate.email, phone: c.candidate.phone, website: c.candidate.website }} />
+                <ConflictCol title={`Bestehend · ${c.existing.source}`} tone="muted" data={{ company: c.existing.company, email: c.existing.email, phone: c.existing.phone, website: c.existing.website }} />
+              </div>
+              <div className="mt-3 inline-flex flex-wrap items-center gap-0.5 rounded-md border border-border-subtle bg-canvas p-0.5">
+                {ACTS.map((a) => (
+                  <button key={a.key} type="button"
+                    onClick={() => setActions((prev) => ({ ...prev, [c.candidate.externalRef]: a.key }))}
+                    className={cn('rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                      act === a.key ? 'bg-accent-500 text-white' : 'text-text-muted hover:text-text-primary')}>
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Modal>
+  );
+}
 
-                                        {result.evaluation.issues.length > 0 && (
-                                            <div className="mt-3">
-                                                <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Probleme:</p>
-                                                <ul className="text-sm text-red-600 space-y-1">
-                                                    {result.evaluation.issues.map((issue, i) => (
-                                                        <li key={i}>• {issue}</li>
-                                                    ))}
-                                                </ul>
-                                            </div>
-                                        )}
-                                    </div>
+function ConflictCol({ title, tone, data }: { title: string; tone: 'accent' | 'muted'; data: { company?: string; email?: string; phone?: string; website?: string } }) {
+  return (
+    <div className={cn('rounded-md border p-2.5', tone === 'accent' ? 'border-accent-500/30 bg-accent-500/5' : 'border-border-subtle bg-surface')}>
+      <p className={cn('mb-1 text-[10px] font-medium uppercase tracking-wider', tone === 'accent' ? 'text-accent-500' : 'text-text-muted')}>{title}</p>
+      <p className="truncate text-sm font-medium text-text-primary">{data.company || '—'}</p>
+      <p className="truncate text-xs text-text-secondary">{data.email || '— keine E-Mail'}</p>
+      <p className="truncate text-xs text-text-secondary">{data.phone || '— kein Telefon'}</p>
+      <p className="truncate text-xs text-text-secondary">{data.website ? data.website.replace(/^https?:\/\//, '') : '— keine Website'}</p>
+    </div>
+  );
+}
 
-                                    <div className="flex flex-col items-center gap-1">
-                                        <div className={`w-16 h-16 rounded-xl flex items-center justify-center ${getScoreColor(result.evaluation.score)}`}>
-                                            <Star className="w-8 h-8 text-white" />
-                                        </div>
-                                        <span className="text-xs text-gray-500">
-                                            {result.action === 'created' ? 'Neu' : 'Aktualisiert'}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
+/* ── Fortschritt großer Scrape ──────────────────────────────────────────── */
+function CountryProgress({ status, onCancel, cancelling }: { status: ScraperJobStatus; onCancel?: () => void; cancelling?: boolean }) {
+  const pct = status.total ? Math.min(100, Math.round((status.processed / status.total) * 100)) : 0;
+  const running = status.status === 'running' || status.status === 'queued';
+  const tone = status.status === 'done' ? 'success' : status.status === 'error' ? 'danger' : status.status === 'cancelled' ? 'warning' : 'accent';
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {running
+            ? <Loader2 className="size-4 animate-spin text-accent-500" />
+            : status.status === 'done'
+              ? <Check className="size-4 text-status-success" />
+              : <X className="size-4 text-status-danger" />}
+          <span className="text-sm font-medium text-text-primary">
+            {running
+              ? `Scrape läuft — ${status.processed}/${status.total} Städte abgearbeitet`
+              : status.status === 'done'
+                ? 'Großer Scrape abgeschlossen'
+                : status.status === 'cancelled'
+                  ? 'Großer Scrape gestoppt — bereits importierte Leads bleiben erhalten'
+                  : 'Großer Scrape abgebrochen'}
+          </span>
         </div>
-    );
+        <div className="flex items-center gap-2">
+          {running && onCancel && (
+            <Button variant="secondary" size="sm" onClick={onCancel} disabled={cancelling}>
+              <X className="size-4" />{cancelling ? 'Stoppe…' : 'Stoppen'}
+            </Button>
+          )}
+          <Badge tone={tone}>{pct}%</Badge>
+        </div>
+      </div>
+      <div className="h-2 w-full overflow-hidden rounded-full bg-elevated">
+        <div className={cn('h-full rounded-full transition-all duration-500', status.status === 'error' ? 'bg-status-danger' : 'bg-accent-500')}
+          style={{ width: `${pct}%` }} />
+      </div>
+      <div className="mt-4 grid grid-cols-3 gap-3">
+        {([['Gefunden', status.found], ['Neu importiert', status.imported], ['Aktualisiert', status.updated]] as const).map(([label, value]) => (
+          <div key={label} className="rounded-md border border-border-subtle bg-elevated/40 p-3 text-center">
+            <div className="text-2xl font-semibold text-text-primary tabular-nums">{value}</div>
+            <div className="label-technical mt-0.5 text-text-muted">{label}</div>
+          </div>
+        ))}
+      </div>
+      {status.error && <p className="mt-3 text-xs text-status-danger">{status.error}</p>}
+      {running && <p className="mt-3 text-xs text-text-muted">Du kannst diese Ansicht offen lassen — die Leads erscheinen währenddessen schon unter „Leads → Scraping".</p>}
+    </Card>
+  );
+}
+
+function CheckBox({ checked, onChange, ariaLabel }: { checked: boolean; onChange: () => void; ariaLabel?: string }) {
+  return (
+    <button type="button" role="checkbox" aria-checked={checked} aria-label={ariaLabel}
+      onClick={(e) => { e.stopPropagation(); onChange(); }}
+      className={cn('flex size-[18px] shrink-0 items-center justify-center rounded border transition-colors',
+        checked ? 'border-accent-500 bg-accent-500 text-white' : 'border-border-strong bg-canvas hover:border-accent-500')}>
+      {checked && <Check className="size-3" strokeWidth={3} />}
+    </button>
+  );
 }

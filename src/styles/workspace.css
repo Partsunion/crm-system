@@ -1,0 +1,349 @@
+/* Partsunion internal workspace v2. The shared shell feels related to Admin,
+   while CRM keeps its own sales colours, stages and interaction patterns. */
+
+:root,
+[data-theme] {
+  --radius: 12px;
+}
+
+[hidden] { display: none !important; }
+
+body {
+  font-family: var(--font-body);
+  font-size: 14px;
+}
+
+main h1 { letter-spacing: -0.025em; }
+main h2 { letter-spacing: -0.015em; }
+main fieldset { min-width: 0; }
+main table th { font-size: 12px; font-weight: 650; letter-spacing: 0.01em; }
+main table td { font-size: 14px; }
+
+/* Optional lead columns are chosen explicitly; core columns remain visible. */
+
+/* Cards regain their depth. theme.css owns the actual light/dark values. */
+.karte,
+.karte-klein {
+  background: var(--bg-surface);
+  border-color: var(--karte-rand);
+  box-shadow: var(--karte-schatten);
+}
+
+.karte { border-radius: 14px; }
+.karte-klein { border-radius: 12px; }
+
+.karte:is(a, button, [role="button"]):hover,
+.karte-klein:is(a, button, [role="button"]):hover {
+  border-color: var(--karte-rand-hover);
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* Existing hand-written panels receive the same quiet depth as Card. */
+[data-workspace="crm"] main :is(section, article).rounded-lg.border.bg-surface {
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+}
+
+.label-technical {
+  font-family: var(--font-body);
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.crm-metric-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  min-height: 76px;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.crm-metric-card::after {
+  content: '';
+  position: absolute;
+  inset: 12px auto 12px 0;
+  width: 2px;
+  background: var(--metric-color, var(--accent-500));
+  opacity: 0.82;
+}
+
+.crm-metric-card:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+:where(a[href], button:not(:disabled), summary, label[for], select:not(:disabled),
+  input[type="checkbox"]:not(:disabled), input[type="radio"]:not(:disabled),
+  [role="button"]:not([aria-disabled="true"])) {
+  cursor: pointer;
+}
+
+:where(button:disabled, select:disabled, input:disabled, [aria-disabled="true"]) {
+  cursor: not-allowed;
+}
+
+.crm-work-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(110px, 0.9fr) minmax(95px, auto);
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  width: 100%;
+  text-align: left;
+  border-top: 1px solid var(--border);
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.crm-work-row:hover {
+  background: color-mix(in srgb, var(--accent-500) 5%, var(--bg-surface));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent-500) 70%, transparent);
+}
+
+input,
+select { min-height: 38px; }
+input[type="checkbox"],
+input[type="radio"] { min-height: auto; }
+
+[data-theme="light"] input[type="date"]::-webkit-calendar-picker-indicator,
+[data-theme="light"] input[type="time"]::-webkit-calendar-picker-indicator { filter: none; }
+
+@media (max-width: 640px) {
+  .crm-work-row { grid-template-columns: minmax(0, 1fr) minmax(90px, 120px); gap: 10px; padding: 14px 16px; }
+  .crm-work-row > :nth-child(2) { display: none; }
+  .crm-metric-card { min-height: 76px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Sales Workbench v3 ──────────────────────────────────────────────────
+   Same geometry as Admin, with a sales-specific rhythm: pipeline state and
+   urgency carry colour; navigation and data surfaces remain calm. */
+
+:root,
+[data-theme] {
+  --radius: 8px;
+}
+
+.crm-sidebar {
+  --text-primary: #f4f7fc;
+  --text-secondary: #d4dce9;
+  --text-tertiary: #aebbcf;
+  --text-muted: #8090a8;
+  --border: #1d3048;
+  --border-strong: #344a66;
+  --overlay: 255 255 255;
+  background: #081629;
+  border-color: #1d3048;
+  color: var(--text-primary);
+  box-shadow: 18px 0 44px -38px rgb(0 8 20 / 0.95);
+}
+
+.crm-sidebar nav {
+  scrollbar-width: thin;
+  scrollbar-color: #2a3d57 transparent;
+}
+
+.crm-sidebar button,
+.crm-sidebar a {
+  letter-spacing: -0.006em;
+}
+
+[data-workspace="crm"] > div > header {
+  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  box-shadow: 0 1px 0 var(--border);
+}
+
+[data-workspace="crm"] main {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent-500) 2.5%, transparent), transparent 22rem),
+    var(--bg-canvas);
+}
+
+[data-workspace="crm"] main h1 {
+  font-size: clamp(1.65rem, 2vw, 2.1rem);
+  letter-spacing: -0.035em;
+}
+
+[data-workspace="crm"] .karte,
+[data-workspace="crm"] .karte-klein {
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  box-shadow: 0 1px 2px rgb(4 12 28 / 0.18);
+}
+
+[data-workspace="crm"] .karte:hover,
+[data-workspace="crm"] .karte-klein:hover {
+  border-color: var(--border-strong);
+}
+
+.crm-page-intro {
+  position: relative;
+  padding-left: 1.25rem;
+}
+
+.crm-page-intro::before {
+  content: '';
+  position: absolute;
+  inset: 4px auto 4px 0;
+  width: 2px;
+  background: var(--accent-500);
+}
+
+.crm-kpi-rail {
+  overflow: hidden;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-surface);
+  box-shadow: 0 1px 2px rgb(4 12 28 / 0.16);
+}
+
+/* Dashboard: quiet work lists and a single typographic line of useful figures. */
+.crm-facts-line { display: flex; flex-wrap: wrap; gap: 12px 30px; padding-block: 0 2px; }
+.crm-facts-line > div { display: flex; align-items: baseline; gap: 10px; }
+.crm-facts-line span { color: var(--text-muted); font-size: 11px; }
+.crm-facts-line strong { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.crm-dashboard .crm-dashboard-grid .karte { background: transparent; border: 0; border-top: 1px solid var(--border); border-radius: 0; box-shadow: none; }
+.crm-dashboard .crm-dashboard-grid .karte > div:first-child:has(h2) { background: transparent; }
+.crm-dashboard .crm-dashboard-grid h2 > span { background: transparent; width: 20px; height: 20px; }
+.crm-dashboard .crm-page-intro { padding-left: 0; }
+.crm-dashboard .crm-page-intro::before { display: none; }
+
+.crm-kpi-rail .crm-metric-card {
+  min-height: 72px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.crm-kpi-rail .crm-metric-card:last-child { border-right: 0; }
+.crm-kpi-rail .crm-metric-card:hover { background: var(--bg-elevated); box-shadow: none; }
+
+.crm-metric-card::after {
+  inset: 11px auto 11px 0;
+  width: 2px;
+}
+
+.crm-dashboard-grid .karte > div:first-child,
+.crm-dashboard-grid .karte > h2:first-child {
+  letter-spacing: -0.012em;
+}
+
+.crm-dashboard-grid .karte > div:first-child:has(h2) {
+  background: color-mix(in srgb, var(--bg-elevated) 36%, transparent);
+  border-bottom: 1px solid var(--border);
+}
+
+.crm-work-row {
+  padding: 12px 18px;
+  border-color: var(--border);
+}
+
+.crm-work-row:hover {
+  background: color-mix(in srgb, var(--accent-500) 4%, var(--bg-surface));
+  box-shadow: inset 2px 0 0 var(--accent-500);
+}
+
+.crm-command-bar,
+.crm-filter-bar,
+.crm-quality-rail {
+  border-radius: 7px;
+  box-shadow: 0 1px 2px rgb(4 12 28 / 0.14);
+}
+
+.crm-command-bar {
+  background: color-mix(in srgb, var(--bg-surface) 97%, var(--accent-500));
+}
+
+.crm-pipeline-board {
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.crm-pipeline-column {
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-elevated) 68%, var(--bg-canvas));
+}
+
+.crm-pipeline-column > div:first-child {
+  background: var(--bg-surface);
+}
+
+.crm-pipeline-column article {
+  border-radius: 6px;
+  box-shadow: 0 1px 1px rgb(4 12 28 / 0.18);
+}
+
+.crm-pipeline-column article:hover {
+  background: color-mix(in srgb, var(--bg-surface) 95%, var(--accent-500));
+  box-shadow: inset 2px 0 0 var(--accent-500);
+}
+
+.crm-filter-bar > div:first-child {
+  background: color-mix(in srgb, var(--bg-elevated) 30%, transparent);
+}
+
+.crm-quality-rail {
+  background: color-mix(in srgb, var(--bg-surface) 96%, var(--accent-500));
+}
+
+.crm-table-surface {
+  border-radius: 7px;
+  box-shadow: none;
+}
+
+.crm-table-surface thead {
+  background: var(--bg-elevated);
+}
+
+.crm-table-surface tbody tr {
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.crm-table-surface tbody tr:hover {
+  background: color-mix(in srgb, var(--accent-500) 4%, var(--bg-surface));
+  box-shadow: inset 2px 0 0 var(--accent-500);
+}
+
+.crm-calendar-kpis {
+  gap: 0;
+  overflow: hidden;
+  border-radius: 7px;
+  box-shadow: 0 1px 2px rgb(4 12 28 / 0.14);
+}
+
+.crm-calendar-kpis > div {
+  margin-left: -1px;
+}
+
+.crm-calendar-kpis > div:first-child { margin-left: 0; }
+
+.crm-calendar-surface {
+  border-radius: 7px;
+}
+
+.crm-calendar-surface > div:first-child {
+  background: color-mix(in srgb, var(--bg-elevated) 40%, transparent);
+}
+
+[data-workspace="crm"] :is(input, textarea, select):not([type="checkbox"]):not([type="radio"]) {
+  border-radius: 6px;
+}
+
+@media (max-width: 1279px) {
+  .crm-kpi-rail .crm-metric-card:nth-child(2) { border-right: 0; }
+  .crm-kpi-rail .crm-metric-card:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+}
+
+@media (max-width: 639px) {
+  .crm-kpi-rail .crm-metric-card { border-right: 0; border-bottom: 1px solid var(--border); }
+  .crm-kpi-rail .crm-metric-card:last-child { border-bottom: 0; }
+  .crm-calendar-kpis > div:nth-child(odd) { margin-left: 0; }
+  .crm-calendar-kpis > div:nth-child(-n+2) { margin-bottom: -1px; }
+}

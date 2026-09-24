@@ -1,233 +1,111 @@
-/* Premium UI Enhancements */
+/* Motion & micro-interactions — Partsunion CRM.
+ * Schlanker Rest nach dem Design-Refactoring: nur noch die tatsächlich
+ * genutzten Animationen + der Input-Focus-Glow. Alle Farben laufen über die
+ * Design-Tokens (theme.css / @theme in tailwind.css). Kein Light-/Purple-Rest,
+ * keine Gradient-/Glass-/Stats-Card-Altlasten mehr. */
 
-/* Glassmorphism Cards */
-.glass-card {
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
-}
-
-/* Premium Shadows */
-.shadow-premium {
-  box-shadow: 0 10px 40px -10px rgba(124, 58, 237, 0.15),
-              0 0 15px rgba(124, 58, 237, 0.05);
-}
-
-.shadow-premium-lg {
-  box-shadow: 0 20px 60px -15px rgba(124, 58, 237, 0.25),
-              0 0 30px rgba(124, 58, 237, 0.1);
-}
-
-/* Premium Gradient Backgrounds */
-.gradient-premium {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-}
-
-.gradient-purple {
-  background: linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%);
-}
-
-.gradient-success {
-  background: linear-gradient(135deg, #10b981 0%, #34d399 100%);
-}
-
-.gradient-warning {
-  background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%);
-}
-
-.gradient-danger {
-  background: linear-gradient(135deg, #ef4444 0%, #f87171 100%);
-}
-
-/* Premium Button Styles */
-.btn-premium {
-  position: relative;
-  overflow: hidden;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.btn-premium::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 0;
-  height: 0;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.2);
-  transform: translate(-50%, -50%);
-  transition: width 0.6s, height 0.6s;
-}
-
-.btn-premium:hover::before {
-  width: 300px;
-  height: 300px;
-}
-
-/* Premium Input Focus */
+/* ── Input-Focus-Glow (Akzent) ───────────────────────────── */
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   outline: none;
-  border-color: #7c3aed;
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1),
-              0 4px 12px rgba(124, 58, 237, 0.15);
+  border-color: var(--accent-500);
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
-/* Smooth Animations */
+/* ── Keyframes ───────────────────────────────────────────── */
 @keyframes slideInUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes scaleIn {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.animate-slide-in-up {
-  animation: slideInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.animate-scale-in {
-  animation: scaleIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* Premium Hover Effects */
-.hover-lift {
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-              box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.hover-lift:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.15);
-}
-
-/* Premium Badge */
-.badge-premium {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  padding: 0.25rem 0.75rem;
-  border-radius: 9999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.3);
-}
-
-/* Smooth Page Transitions */
-.page-transition {
-  animation: fadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
-/* Premium Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+.animate-slide-in-up { animation: slideInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+.animate-scale-in    { animation: scaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+.page-transition     { animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+
+/*
+ * Einblendung beim Ansichtswechsel.
+ *
+ * Ersetzt ein `motion.div` mit denselben Werten (opacity 0→1, y 8→0, 0,22 s,
+ * dieselbe Kurve). Die Bewegungsbibliothek wurde dafuer beim Start geladen —
+ * rund 110 KB fuer eine Einblendung, die der Browser selbst kann. Sie wird
+ * weiter benutzt, aber nur noch in nachgeladenen Ansichten.
+ *
+ * Wer Bewegung abgestellt hat, bekommt sie auch hier nicht. Die
+ * Bewegungsbibliothek hat das selbst beruecksichtigt; ohne diese Regel waere
+ * es beim Umstieg stillschweigend verlorengegangen.
+ */
+@keyframes ansichtHerein {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-::-webkit-scrollbar-track {
-  background: #f1f1f1;
-  border-radius: 10px;
+.ansicht-herein { animation: ansichtHerein 0.22s cubic-bezier(0.16, 1, 0.3, 1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ansicht-herein { animation: none; }
 }
 
-::-webkit-scrollbar-thumb {
-  background: linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%);
-  border-radius: 10px;
+/*
+ * Gestaffeltes Einblenden — ersetzt <Reveal> und <Item>.
+ *
+ * Vorher lief das ueber die Bewegungsbibliothek (staggerChildren 0,05 s,
+ * delayChildren 0,04 s, fadeInUp 0,4 s). Dieselben Werte, nur ohne 111 KB
+ * JavaScript: die Uebersicht ist die Startansicht, also wurde die Bibliothek
+ * direkt nach dem Anmelden geladen — fuer eine Einblendung, die der Browser
+ * selbst beherrscht.
+ *
+ * Die Verzoegerung steht als nth-child-Regel und nicht als Rechnung ueber
+ * eine Variable: eine Variable je Kind muesste jemand setzen, und das waere
+ * wieder JavaScript. Ab dem zwoelften Kind bleibt es bei derselben
+ * Verzoegerung — laenger als eine halbe Sekunde soll niemand auf eine
+ * Einblendung warten, und ab da sieht man den Unterschied ohnehin nicht mehr.
+ *
+ * `both` in der Kurzschreibweise ist wichtig: ohne das steht das Element
+ * waehrend seiner Verzoegerung schon sichtbar da und springt dann auf
+ * unsichtbar zurueck, bevor es einblendet.
+ */
+@keyframes einblendenHerein {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(135deg, #6d28d9 0%, #9333ea 100%);
+.einblenden > * {
+  animation: einblendenHerein 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 40ms;
+}
+.einblenden > *:nth-child(2)  { animation-delay:  90ms; }
+.einblenden > *:nth-child(3)  { animation-delay: 140ms; }
+.einblenden > *:nth-child(4)  { animation-delay: 190ms; }
+.einblenden > *:nth-child(5)  { animation-delay: 240ms; }
+.einblenden > *:nth-child(6)  { animation-delay: 290ms; }
+.einblenden > *:nth-child(7)  { animation-delay: 340ms; }
+.einblenden > *:nth-child(8)  { animation-delay: 390ms; }
+.einblenden > *:nth-child(9)  { animation-delay: 440ms; }
+.einblenden > *:nth-child(10) { animation-delay: 490ms; }
+.einblenden > *:nth-child(n+11) { animation-delay: 540ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .einblenden > * { animation: none; }
 }
 
-/* Premium Table Styles */
-.table-premium {
-  border-collapse: separate;
-  border-spacing: 0;
+/* ── Hover-Lift (Karten) ─────────────────────────────────── */
+.hover-lift {
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.table-premium thead tr th {
-  background: linear-gradient(to bottom, #fafafa 0%, #f5f5f5 100%);
-  border-bottom: 2px solid #e5e7eb;
-  font-weight: 600;
-  text-transform: uppercase;
-  font-size: 0.75rem;
-  letter-spacing: 0.05em;
-  color: #6b7280;
-  padding: 1rem 1.5rem;
-}
-
-.table-premium tbody tr {
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.table-premium tbody tr:hover {
-  background-color: #faf5ff;
-  box-shadow: inset 0 0 0 1px #e9d5ff;
-}
-
-/* Premium Modal Overlay */
-.modal-overlay-premium {
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-
-/* Glow Effect */
-.glow-purple {
-  box-shadow: 0 0 20px rgba(124, 58, 237, 0.3),
-              0 0 40px rgba(124, 58, 237, 0.15);
-}
-
-.glow-purple:hover {
-  box-shadow: 0 0 30px rgba(124, 58, 237, 0.4),
-              0 0 60px rgba(124, 58, 237, 0.2);
-}
-
-/* Premium Card Hover */
-.card-premium {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  border: 1px solid #e5e7eb;
-}
-
-.card-premium:hover {
-  border-color: #c4b5fd;
-  box-shadow: 0 10px 40px -10px rgba(124, 58, 237, 0.2);
+.hover-lift:hover {
   transform: translateY(-2px);
-}
-
-/* Premium Stats Card */
-.stats-card {
-  background: white;
-  border-radius: 1rem;
-  padding: 1.5rem;
-  border: 1px solid #e5e7eb;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.stats-card:hover {
-  border-color: #7c3aed;
-  box-shadow: 0 10px 30px -5px rgba(124, 58, 237, 0.15);
+  box-shadow: var(--shadow-card-hover);
 }

@@ -1,365 +1,287 @@
+/**
+ * Einstellungen — Status, Quellen, Branchen, Etiketten, Firmenangaben.
+ *
+ * ─── Was hier geändert wurde und warum ─────────────────────────────────────
+ *
+ * DICHTE. Jede der vier Listen trug einen Kopf von rund 90 px, bevor der
+ * erste Eintrag kam: ein 40-px-Symbolfeld, Titel, Unterzeile, Trennlinie,
+ * dazu 20 px Abstand. Die Einträge selbst waren 44 px hoch. Acht Status
+ * ergaben so eine Karte von über 450 px — für acht Wörter. Auf einem
+ * 13-Zoll-Bildschirm passte keine zweite Karte daneben ins Bild.
+ *
+ * Jetzt: Symbol 28 px in der Titelzeile, keine Trennlinie, Einträge 30 px.
+ * Die Abstände kommen aus dichte.ts wie überall sonst.
+ *
+ * DIE NUMMER VOR JEDEM EINTRAG ist weg. Sie sah nach Reihenfolge aus, aber
+ * man konnte nichts umsortieren — die Zahl war reine Zählerei und behauptete
+ * eine Bedeutung, die es nicht gab. (Umsortieren gibt es, aber in den
+ * Pipeline-Einstellungen, und dort mit Pfeilen.)
+ *
+ * ZWEI SPEICHERN-KNÖPFE wurden zu einem. Oben und unten stand derselbe Knopf
+ * mit derselben Wirkung, unten nur mit anderer Aufschrift („Alle
+ * Einstellungen speichern"), was aussah, als täte er etwas anderes.
+ *
+ * ─── Zwei Fehler, die nichts mit dem Aussehen zu tun hatten ────────────────
+ *
+ * 1. Der Speichern-Knopf meldete IMMER Erfolg. `saveSettings` gab nichts
+ *    zurück und prüfte die Antwort des Servers nicht. Wem `settings.write`
+ *    fehlt, der bekam „Einstellungen gespeichert" und fand seine Änderung
+ *    beim nächsten Laden nicht wieder — weil beim Start der Serverstand den
+ *    lokalen überschreibt. Siehe utils/einstellungenSichern.ts.
+ *
+ * 2. Beim Entfernen eines Status wurde nur gefragt, ob man das wirklich will.
+ *    Nicht aber, dass Leads in diesem Status danach mit einem Status
+ *    dastehen, den es nicht mehr gibt — sie bekommen dann eine Farbe aus dem
+ *    Hash und tauchen in keinem Filter mehr auf. Jetzt steht in der Frage,
+ *    wie viele Leads es trifft.
+ */
 import { useState } from 'react';
-import { Plus, X, Trash2, Save, Settings as SettingsIcon, Tag, Package, Briefcase } from 'lucide-react';
-import { getSettings, saveSettings, type Settings as SettingsType } from '../utils/storage';
+import { PhoneSettingsCard } from '../phone/PhoneUI';
+import { CrmMailSettings } from './LeadEmailComposer';
+import { Plus, Trash2, Save, Tag, Package, Briefcase, ListChecks, Check } from 'lucide-react';
+import { toast } from 'sonner';
+import { getSettings, getLeads, getCurrentUser, type Settings as SettingsType } from '../utils/storage';
+import { useWorkspaceGuard } from '../utils/useWorkspaceGuard';
+import { einstellungenSichern } from '../utils/einstellungenSichern';
+import { Button, Card, Field, IconButton, PageHeader, SEITEN_RAND, cn, inputClass } from './ui-kit';
+import { KARTE_INNEN, LEER_INNEN } from './dichte';
+
+type ListKey = 'statuses' | 'sources' | 'industries' | 'tags';
 
 export function Settings() {
   const [settings, setSettings] = useState<SettingsType>(getSettings());
-  const [newStatus, setNewStatus] = useState('');
-  const [newSource, setNewSource] = useState('');
-  const [newIndustry, setNewIndustry] = useState('');
-  const [newTag, setNewTag] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [speichert, setSpeichert] = useState(false);
+  const [savedSnapshot, setSavedSnapshot] = useState(() => JSON.stringify(getSettings()));
+  const [section, setSection] = useState<'phone'|'mail'|'fields'|'company'>('phone');
+  const dirty = JSON.stringify(settings) !== savedSnapshot;
+  const canManage = getCurrentUser()?.role === 'manager' || Boolean(getCurrentUser()?.app_access?.admin);
+  useWorkspaceGuard(dirty, speichert);
+  /**
+   * Wie viele Leads hängen an welchem Status.
+   *
+   * Wird NICHT beim Öffnen der Seite geholt, sondern erst beim ersten Klick
+   * auf ein Mülleimer-Symbol. Die Leadliste sind 405 KB — die für eine
+   * Zahl zu laden, die die meisten nie brauchen, wäre verschwendet. Wer
+   * vorher schon in den Leads war, hat sie ohnehin im Zwischenspeicher, und
+   * dann kostet der Abruf hier gar nichts.
+   */
+  const [belegung, setBelegung] = useState<Record<string, number> | null>(null);
 
   const handleSave = async () => {
-    try {
-      await saveSettings(settings);
-      alert('✅ Einstellungen erfolgreich gespeichert!');
-    } catch (error) {
-      alert(error instanceof Error ? error.message : 'Einstellungen konnten nicht gespeichert werden.');
-    }
+    setSpeichert(true);
+    const ok = await einstellungenSichern(settings, 'Einstellungen gespeichert.');
+    setSpeichert(false);
+    if (!ok) return;
+    setSavedSnapshot(JSON.stringify(settings));
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
   };
 
-  const addStatus = () => {
-    if (newStatus && !settings.statuses.includes(newStatus)) {
-      setSettings(prev => ({
-        ...prev,
-        statuses: [...prev.statuses, newStatus]
-      }));
-      setNewStatus('');
+  const addItem = (key: ListKey, value: string) => {
+    if (!value) return;
+    if (settings[key].includes(value)) {
+      toast.error(`„${value}" gibt es schon.`);
+      return;
     }
+    setSettings((prev) => ({ ...prev, [key]: [...prev[key], value] }));
   };
 
-  const removeStatus = (status: string) => {
-    if (confirm(`Status "${status}" wirklich entfernen?`)) {
-      setSettings(prev => ({
-        ...prev,
-        statuses: prev.statuses.filter(s => s !== status)
-      }));
-    }
+  /** Zählt Leads je Status — einmal, dann gemerkt. */
+  const belegungHolen = async (): Promise<Record<string, number>> => {
+    if (belegung) return belegung;
+    const zaehler: Record<string, number> = {};
+    for (const l of await getLeads()) if (l.status) zaehler[l.status] = (zaehler[l.status] ?? 0) + 1;
+    setBelegung(zaehler);
+    return zaehler;
   };
 
-  const addSource = () => {
-    if (newSource && !settings.sources.includes(newSource)) {
-      setSettings(prev => ({
-        ...prev,
-        sources: [...prev.sources, newSource]
-      }));
-      setNewSource('');
-    }
-  };
-
-  const removeSource = (source: string) => {
-    if (confirm(`Quelle "${source}" wirklich entfernen?`)) {
-      setSettings(prev => ({
-        ...prev,
-        sources: prev.sources.filter(s => s !== source)
-      }));
-    }
-  };
-
-  const addIndustry = () => {
-    if (newIndustry && !settings.industries.includes(newIndustry)) {
-      setSettings(prev => ({
-        ...prev,
-        industries: [...prev.industries, newIndustry]
-      }));
-      setNewIndustry('');
-    }
-  };
-
-  const removeIndustry = (industry: string) => {
-    if (confirm(`Branche "${industry}" wirklich entfernen?`)) {
-      setSettings(prev => ({
-        ...prev,
-        industries: prev.industries.filter(i => i !== industry)
-      }));
-    }
-  };
-
-  const addTag = () => {
-    if (newTag && !settings.tags.includes(newTag)) {
-      setSettings(prev => ({
-        ...prev,
-        tags: [...prev.tags, newTag]
-      }));
-      setNewTag('');
-    }
-  };
-
-  const removeTag = (tag: string) => {
-    if (confirm(`Tag "${tag}" wirklich entfernen?`)) {
-      setSettings(prev => ({
-        ...prev,
-        tags: prev.tags.filter(t => t !== tag)
-      }));
+  const removeItem = async (key: ListKey, value: string, label: string) => {
+    // Bei Status: sagen, was daran hängt. Ein Lead mit einem Status, den es
+    // nicht mehr gibt, behält ihn — taucht aber in keinem Filter mehr auf.
+    // Das darf man nicht aus Versehen tun.
+    let betroffen = 0;
+    try { betroffen = key === 'statuses' ? ((await belegungHolen())[value] ?? 0) : 0; } catch { toast.error('Lead-Belegung konnte nicht geprüft werden. Bitte erneut versuchen.'); return; }
+    const zusatz = betroffen > 0
+      ? `\n\n${betroffen} ${betroffen === 1 ? 'Lead steht' : 'Leads stehen'} auf diesem Status. `
+        + `${betroffen === 1 ? 'Er behält' : 'Sie behalten'} ihn, aber er taucht dann in keinem Filter mehr auf.`
+      : '';
+    if (confirm(`${label} „${value}" wirklich entfernen?${zusatz}`)) {
+      setSettings((prev) => ({ ...prev, [key]: prev[key].filter((v) => v !== value) }));
     }
   };
 
   return (
-    <div className="p-4 md:p-8 space-y-6 md:space-y-8">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="text-2xl md:text-3xl font-bold text-gray-900">Einstellungen</h2>
-          <p className="text-gray-500 mt-1 text-sm md:text-base">Passen Sie Ihr CRM-System an Ihre Bedürfnisse an</p>
-        </div>
-        <button
-          onClick={() => void handleSave()}
-          className="flex items-center justify-center gap-2 px-5 py-3 md:px-6 md:py-3 bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white rounded-xl hover:shadow-lg hover:shadow-purple-500/30 transition-all duration-200 font-medium"
-        >
-          <Save className="w-4 h-4 md:w-5 md:h-5" />
-          <span className="hidden sm:inline">Alle Einstellungen speichern</span>
-          <span className="sm:hidden">Speichern</span>
-        </button>
-      </div>
+    <div className={cn(SEITEN_RAND, 'space-y-4')}>
+      <PageHeader
+        title="Einstellungen"
+        subtitle="Listen und Firmenangaben für dieses CRM."
+        actions={
+          canManage && <Button onClick={handleSave} disabled={speichert || !dirty}>
+            {saved ? <Check className="size-4" /> : <Save className="size-4" />}
+            {speichert ? 'Speichert…' : saved ? 'Gespeichert' : dirty ? 'Änderungen speichern' : 'Gespeichert'}
+          </Button>
+        }
+      />
 
-      {/* Settings Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
-        {/* Status Settings */}
-        <div className="bg-white p-6 rounded-2xl border border-gray-200 hover:shadow-xl transition-all duration-300">
-          <div className="flex items-center gap-3 mb-6 pb-4 border-b border-gray-100">
-            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-md shadow-blue-500/20">
-              <Tag className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h3 className="text-xl font-bold text-gray-900">Status-Optionen</h3>
-              <p className="text-sm text-gray-500">Pipeline Status verwalten</p>
-            </div>
-          </div>
-          
-          <div className="space-y-3 mb-5">
-            {settings.statuses.map((status, index) => (
-              <div key={status} className="flex items-center justify-between p-4 bg-gradient-to-r from-gray-50 to-blue-50 rounded-xl border border-gray-200 hover:border-blue-300 transition-colors group">
-                <div className="flex items-center gap-3">
-                  <span className="w-8 h-8 bg-blue-100 text-blue-700 rounded-lg flex items-center justify-center font-bold text-sm">
-                    {index + 1}
-                  </span>
-                  <span className="text-gray-900 font-medium">{status}</span>
-                </div>
-                <button
-                  onClick={() => removeStatus(status)}
-                  className="p-2 hover:bg-red-100 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
-                >
-                  <Trash2 className="w-4 h-4 text-red-600" />
-                </button>
-              </div>
-            ))}
-          </div>
+      <nav className="flex flex-wrap gap-2 border-b border-border-subtle" aria-label="Einstellungsbereiche">{([{id:'phone',label:'Telefonie'},{id:'mail',label:'E-Mail'},{id:'fields',label:'CRM-Felder'},{id:'company',label:'Unternehmen'}] as const).map(tab=><button key={tab.id} type="button" className="crm-view-tab" aria-pressed={section===tab.id} onClick={()=>setSection(tab.id)}>{tab.label}</button>)}</nav>
+      {dirty && <p role="status" className="text-xs text-status-warning">Ungespeicherte Änderungen</p>}
+      {section === 'phone' && <PhoneSettingsCard />}
+      {section === 'mail' && <CrmMailSettings />}
+      {section === 'fields' && <fieldset disabled={!canManage || speichert} className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
+        <ListEditor
+          icon={<ListChecks className="size-4" />}
+          title="Status"
+          placeholder="Neuer Status…"
+          items={settings.statuses}
+          belegung={belegung}
+          onAdd={(v) => addItem('statuses', v)}
+          onRemove={(v) => void removeItem('statuses', v, 'Status')}
+        />
+        <ListEditor
+          icon={<Briefcase className="size-4" />}
+          title="Lead-Quellen"
+          placeholder="Neue Quelle…"
+          items={settings.sources}
+          onAdd={(v) => addItem('sources', v)}
+          onRemove={(v) => void removeItem('sources', v, 'Quelle')}
+        />
+        <ListEditor
+          icon={<Package className="size-4" />}
+          title="Branchen"
+          placeholder="Neue Branche…"
+          items={settings.industries}
+          onAdd={(v) => addItem('industries', v)}
+          onRemove={(v) => void removeItem('industries', v, 'Branche')}
+        />
+        <ListEditor
+          icon={<Tag className="size-4" />}
+          title="Etiketten"
+          placeholder="Neues Etikett…"
+          items={settings.tags}
+          onAdd={(v) => addItem('tags', v)}
+          onRemove={(v) => void removeItem('tags', v, 'Etikett')}
+        />
+      </fieldset>}
 
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={newStatus}
-              onChange={(e) => setNewStatus(e.target.value)}
-              placeholder="Neuer Status..."
-              className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#7c3aed] focus:ring-opacity-20 focus:border-[#7c3aed] transition-all duration-200"
-              onKeyPress={(e) => e.key === 'Enter' && addStatus()}
-            />
-            <button
-              onClick={addStatus}
-              className="px-5 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl hover:shadow-lg hover:shadow-blue-500/30 transition-all duration-200"
-            >
-              <Plus className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Source Settings */}
-        <div className="bg-white p-6 rounded-2xl border border-gray-200 hover:shadow-xl transition-all duration-300">
-          <div className="flex items-center gap-3 mb-6 pb-4 border-b border-gray-100">
-            <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-green-600 rounded-xl flex items-center justify-center shadow-md shadow-green-500/20">
-              <Briefcase className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h3 className="text-xl font-bold text-gray-900">Lead-Quellen</h3>
-              <p className="text-sm text-gray-500">Herkunft der Leads</p>
-            </div>
-          </div>
-          
-          <div className="space-y-3 mb-5">
-            {settings.sources.map((source, index) => (
-              <div key={source} className="flex items-center justify-between p-4 bg-gradient-to-r from-gray-50 to-green-50 rounded-xl border border-gray-200 hover:border-green-300 transition-colors group">
-                <div className="flex items-center gap-3">
-                  <span className="w-8 h-8 bg-green-100 text-green-700 rounded-lg flex items-center justify-center font-bold text-sm">
-                    {index + 1}
-                  </span>
-                  <span className="text-gray-900 font-medium">{source}</span>
-                </div>
-                <button
-                  onClick={() => removeSource(source)}
-                  className="p-2 hover:bg-red-100 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
-                >
-                  <Trash2 className="w-4 h-4 text-red-600" />
-                </button>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={newSource}
-              onChange={(e) => setNewSource(e.target.value)}
-              placeholder="Neue Quelle..."
-              className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#7c3aed] focus:ring-opacity-20 focus:border-[#7c3aed] transition-all duration-200"
-              onKeyPress={(e) => e.key === 'Enter' && addSource()}
-            />
-            <button
-              onClick={addSource}
-              className="px-5 py-3 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl hover:shadow-lg hover:shadow-green-500/30 transition-all duration-200"
-            >
-              <Plus className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Industries */}
-        <div className="bg-white p-6 rounded-2xl border border-gray-200 hover:shadow-xl transition-all duration-300">
-          <div className="flex items-center gap-3 mb-6 pb-4 border-b border-gray-100">
-            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl flex items-center justify-center shadow-md shadow-purple-500/20">
-              <Package className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h3 className="text-xl font-bold text-gray-900">Branchen</h3>
-              <p className="text-sm text-gray-500">Branchen für Händler</p>
-            </div>
-          </div>
-          
-          <div className="space-y-3 mb-5">
-            {settings.industries.map((industry, index) => (
-              <div key={industry} className="flex items-center justify-between p-4 bg-gradient-to-r from-gray-50 to-purple-50 rounded-xl border border-gray-200 hover:border-purple-300 transition-colors group">
-                <div className="flex items-center gap-3">
-                  <span className="w-8 h-8 bg-purple-100 text-purple-700 rounded-lg flex items-center justify-center font-bold text-sm">
-                    {index + 1}
-                  </span>
-                  <span className="text-gray-900 font-medium">{industry}</span>
-                </div>
-                <button
-                  onClick={() => removeIndustry(industry)}
-                  className="p-2 hover:bg-red-100 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
-                >
-                  <Trash2 className="w-4 h-4 text-red-600" />
-                </button>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={newIndustry}
-              onChange={(e) => setNewIndustry(e.target.value)}
-              placeholder="Neue Branche..."
-              className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#7c3aed] focus:ring-opacity-20 focus:border-[#7c3aed] transition-all duration-200"
-              onKeyPress={(e) => e.key === 'Enter' && addIndustry()}
-            />
-            <button
-              onClick={addIndustry}
-              className="px-5 py-3 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-xl hover:shadow-lg hover:shadow-purple-500/30 transition-all duration-200"
-            >
-              <Plus className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Tags */}
-        <div className="bg-white p-6 rounded-2xl border border-gray-200 hover:shadow-xl transition-all duration-300">
-          <div className="flex items-center gap-3 mb-6 pb-4 border-b border-gray-100">
-            <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl flex items-center justify-center shadow-md shadow-orange-500/20">
-              <Tag className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h3 className="text-xl font-bold text-gray-900">Tags</h3>
-              <p className="text-sm text-gray-500">Lead-Tags verwalten</p>
-            </div>
-          </div>
-          
-          <div className="space-y-3 mb-5">
-            {settings.tags.map((tag, index) => (
-              <div key={tag} className="flex items-center justify-between p-4 bg-gradient-to-r from-gray-50 to-orange-50 rounded-xl border border-gray-200 hover:border-orange-300 transition-colors group">
-                <div className="flex items-center gap-3">
-                  <span className="w-8 h-8 bg-orange-100 text-orange-700 rounded-lg flex items-center justify-center font-bold text-sm">
-                    {index + 1}
-                  </span>
-                  <span className="text-gray-900 font-medium">{tag}</span>
-                </div>
-                <button
-                  onClick={() => removeTag(tag)}
-                  className="p-2 hover:bg-red-100 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
-                >
-                  <Trash2 className="w-4 h-4 text-red-600" />
-                </button>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={newTag}
-              onChange={(e) => setNewTag(e.target.value)}
-              placeholder="Neues Tag..."
-              className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#7c3aed] focus:ring-opacity-20 focus:border-[#7c3aed] transition-all duration-200"
-              onKeyPress={(e) => e.key === 'Enter' && addTag()}
-            />
-            <button
-              onClick={addTag}
-              className="px-5 py-3 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl hover:shadow-lg hover:shadow-orange-500/30 transition-all duration-200"
-            >
-              <Plus className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Company Settings */}
-      <div className="bg-white p-5 md:p-6 rounded-2xl border border-gray-200 hover:shadow-xl transition-all duration-300">
-        <div className="flex items-center gap-3 mb-6 pb-4 border-b border-gray-100">
-          <div className="w-12 h-12 bg-gradient-to-br from-cyan-500 to-cyan-600 rounded-xl flex items-center justify-center shadow-md shadow-cyan-500/20">
-            <SettingsIcon className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h3 className="text-xl font-bold text-gray-900">Unternehmenseinstellungen</h3>
-            <p className="text-sm text-gray-500">Allgemeine Konfiguration</p>
-          </div>
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Firmenname
-            </label>
+      {section === 'company' && <Card className={KARTE_INNEN}>
+        <KartenTitel icon={<Briefcase className="size-4" />} title="Unternehmen" />
+        <fieldset disabled={!canManage || speichert} className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <Field label="Firmenname">
             <input
               type="text"
               value={settings.companyName}
-              onChange={(e) => setSettings(prev => ({ ...prev, companyName: e.target.value }))}
-              className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#7c3aed] focus:ring-opacity-20 focus:border-[#7c3aed] transition-all duration-200"
+              onChange={(e) => setSettings((prev) => ({ ...prev, companyName: e.target.value }))}
+              className={cn(inputClass, 'h-9')}
             />
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Standard-Währung
-            </label>
+          </Field>
+          <Field label="Standard-Währung">
             <input
               type="text"
               value={settings.currency}
-              onChange={(e) => setSettings(prev => ({ ...prev, currency: e.target.value }))}
-              className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#7c3aed] focus:ring-opacity-20 focus:border-[#7c3aed] transition-all duration-200"
+              onChange={(e) => setSettings((prev) => ({ ...prev, currency: e.target.value }))}
+              className={cn(inputClass, 'h-9')}
             />
-          </div>
-        </div>
-      </div>
-
-      {/* Save Button - Bottom */}
-      <div className="flex justify-end pt-4">
-        <button
-          onClick={() => void handleSave()}
-          className="w-full sm:w-auto flex items-center justify-center gap-3 px-6 py-3 md:px-8 md:py-4 bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white rounded-xl hover:shadow-xl hover:shadow-purple-500/30 transition-all duration-200 font-semibold text-base md:text-lg"
-        >
-          <Save className="w-5 h-5 md:w-6 md:h-6" />
-          Alle Einstellungen speichern
-        </button>
-      </div>
+          </Field>
+        </fieldset>
+      </Card>}
     </div>
+  );
+}
+
+/**
+ * Titelzeile einer Karte.
+ *
+ * Vorher: 40-px-Symbolfeld, Titel, Unterzeile, Trennlinie, 20 px Abstand —
+ * zusammen rund 90 px, bevor der erste Eintrag kam. Die Unterzeilen sagten
+ * dasselbe wie die Titel („Status-Optionen" / „Pipeline-Status verwalten").
+ */
+function KartenTitel({ icon, title, zusatz }: { icon: React.ReactNode; title: string; zusatz?: string }) {
+  return (
+    <div className="mb-3 flex items-center gap-2">
+      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-accent-500/15 text-accent-500">
+        {icon}
+      </span>
+      <h3 className="text-sm font-medium text-text-primary">{title}</h3>
+      {zusatz && <span className="ml-auto text-xs text-text-muted">{zusatz}</span>}
+    </div>
+  );
+}
+
+function ListEditor({
+  icon,
+  title,
+  placeholder,
+  items,
+  belegung,
+  onAdd,
+  onRemove,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  placeholder: string;
+  items: string[];
+  /**
+   * Nur bei den Status gesetzt: wie viele Leads darauf stehen.
+   * `null`, solange noch niemand auf ein Mülleimer-Symbol geklickt hat —
+   * bis dahin wird die Leadliste absichtlich nicht geholt.
+   */
+  belegung?: Record<string, number> | null;
+  onAdd: (value: string) => void;
+  onRemove: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState('');
+  const commit = () => {
+    onAdd(draft.trim());
+    setDraft('');
+  };
+
+  return (
+    <Card className={cn(KARTE_INNEN, 'flex flex-col')}>
+      <KartenTitel icon={icon} title={title} zusatz={items.length > 0 ? `${items.length}` : undefined} />
+
+      {items.length === 0 ? (
+        <p className={cn(LEER_INNEN, 'flex-1 text-sm text-text-muted')}>Noch keine Einträge.</p>
+      ) : (
+        <ul className="mb-3 flex-1 space-y-1">
+          {items.map((item) => (
+            <li
+              key={item}
+              className="group flex items-center justify-between gap-2 rounded-md px-2 py-1 transition-colors hover:bg-elevated/60"
+            >
+              <span className="truncate text-sm text-text-primary">{item}</span>
+              <span className="flex shrink-0 items-center gap-2">
+                {belegung && belegung[item] > 0 && (
+                  <span className="text-xs tabular-nums text-text-muted">{belegung[item]}</span>
+                )}
+                <IconButton
+                  className="size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                  tone="danger"
+                  onClick={() => onRemove(item)}
+                  aria-label={`„${item}" entfernen`}
+                >
+                  <Trash2 className="size-3.5" />
+                </IconButton>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), commit())}
+          placeholder={placeholder}
+          aria-label={placeholder}
+          className={cn(inputClass, 'h-8 text-sm')}
+        />
+        <Button onClick={commit} className="h-8 shrink-0 px-2.5" aria-label={`Zu ${title} hinzufügen`}>
+          <Plus className="size-4" />
+        </Button>
+      </div>
+    </Card>
   );
 }

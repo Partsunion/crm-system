@@ -2,12 +2,24 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/internal-platforms-*']
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crm-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+defaults:
+  run:
+    working-directory: CRM-System
 
 jobs:
   ci:
@@ -16,14 +28,40 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          path: CRM-System
+
+      - name: Checkout paired Admin source for shared-design contract tests
+        uses: actions/checkout@v4
+        with:
+          repository: Partsunion/Admin-Dashboard
+          ref: e39a828db39b181d3f31128aa2ac2aa900e6a37f
+          path: Admin-Dashboard
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.23.2'
+          cache: npm
+          cache-dependency-path: CRM-System/package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Security audit
+        run: npm audit --audit-level=high
 
       - name: Build
         run: npm run build
+        env:
+          VITE_API_BASE_URL: https://api.partsunion.de
+
+      - name: Unit tests and built-CSS probes
+        run: npm test -- --maxWorkers=2

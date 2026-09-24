@@ -1,509 +1,674 @@
-import { useState, useEffect } from 'react';
-import { X, Mail, Phone, Building, User, Calendar, Edit, Trash2, Globe, MapPin, Tag as TagIcon, Plus, MessageSquare, PhoneCall, Video, FileText, CheckCircle, Clock } from 'lucide-react';
-import { type Lead, type Activity, getActivities, saveActivity, deleteActivity } from '../utils/storage';
+import { CallbackPlanner, useCallbackPlanner } from './CallbackPlanner';
+import { VoiceDictation } from './VoiceDictation';
+import { LoadError } from './LoadError';
+import { leadCategory } from '../utils/stages';
+import { safeWebsiteUrl } from '../utils/safeUrl';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { CallButton, CallHistory, ActiveCallNote } from '../phone/PhoneUI';
+import { usePhone } from '../phone/context';
+import {
+  Mail, Phone, User, Calendar, Edit, Trash2, Globe, MapPin, Tag as TagIcon,
+  MessageSquare, PhoneCall, Video, FileText, CheckCircle, Clock, Rocket,
+  ArrowRight, UserCheck, Pencil, Send, Loader2, Briefcase, Star,
+  CalendarClock, Plus, X,
+} from 'lucide-react';
+import { toast } from 'sonner';
+import {
+  type Lead, type Activity, type ActivityType,
+  getActivities, createActivity, updateActivity, deleteActivity, getStatusOptions, getCurrentUser,
+  getAppointments, updateAppointment, cancelAppointment, getAppointmentAdmins,
+  saveLead, type Appointment, type AppointmentAdmin,
+} from '../utils/storage';
+import { LeadEmailComposer } from './LeadEmailComposer';
+import {
+  Modal, Button, IconButton, Badge, StatusBadge, PriorityPill, EmptyState, SectionLabel, inputClass, cn,
+} from './ui-kit';
+import { CustomSelect } from './CustomSelect';
+import { mayLeaveWorkspace, useWorkspaceGuard } from '../utils/useWorkspaceGuard';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+
+const ADMIN_DASHBOARD_URL = (
+  (import.meta.env as Record<string, string | undefined>).VITE_ADMIN_DASHBOARD_URL || 'https://admin.partsunion.de'
+).replace(/\/$/, '');
+
+function buildOnboardingHandoffUrl(lead: Lead): string {
+  const p = new URLSearchParams();
+  const set = (k: string, v: string | number | undefined | null) => {
+    if (v !== undefined && v !== null && String(v).trim() !== '') p.set(k, String(v));
+  };
+  set('name', lead.company);
+  set('company', lead.company);
+  set('email', lead.email);
+  set('whatsapp', lead.whatsappNumber || lead.phone);
+  set('city', lead.city);
+  set('address', lead.address);
+  set('seats', lead.seats);
+  set('vat', lead.vatId);
+  if (lead.smallBusiness) set('smallBusiness', '1');
+  return `${ADMIN_DASHBOARD_URL}/tenants/new?${p.toString()}`;
+}
 
 interface LeadDetailModalProps {
   lead: Lead;
   onClose: () => void;
   onEdit: (lead: Lead) => void;
   onDelete: () => void;
+  /** Navigation callback handles the workspace's unsaved-change guard. */
+  onOpenCalendar?: (lead: Lead) => void;
+  /** Wird nach Statuswechsel/Entscheider-Update aufgerufen, damit Liste/Pipeline neu lädt. */
+  onLeadChanged?: () => void;
+  /**
+   * 'modal' (Default): klassisches Overlay.
+   * 'panel': gedockte Seitenleiste RECHTS NEBEN der Lead-Tabelle — Liste bleibt
+   * bedienbar, Zeilenklick wechselt den Lead im Panel (Remount via key).
+   */
+  variant?: 'modal' | 'panel';
+  navigation?: { index: number; total: number; previous?: () => void; next?: () => void };
 }
 
-export function LeadDetailModal({ lead, onClose, onEdit, onDelete }: LeadDetailModalProps) {
-  const [activeTab, setActiveTab] = useState<'details' | 'activities'>('details');
+/** Gemeinsame Hülle: Overlay-Modal ODER gedocktes Seitenpanel. */
+function Shell({
+  suspended,
+  variant,
+  onClose,
+  title,
+  subtitle,
+  headerAccessory,
+  footer,
+  children,
+}: {
+  suspended?: boolean;
+  variant: 'modal' | 'panel';
+  onClose: () => void;
+  title: React.ReactNode;
+  subtitle?: React.ReactNode;
+  headerAccessory?: React.ReactNode;
+  footer?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  if (variant === 'panel') {
+    return (
+      <section
+        className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-lg"
+        aria-label="Lead-Details"
+      >
+        <header className="flex items-center justify-between gap-2 border-b border-border-subtle px-4 py-3">
+          <div className="min-w-0">
+            <h2 className="truncate text-base font-semibold text-text-primary">{title}</h2>
+            {subtitle ? <p className="truncate text-xs text-text-muted">{subtitle}</p> : null}
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {headerAccessory}
+            <IconButton onClick={onClose} aria-label="Schließen">
+              <X className="size-4" />
+            </IconButton>
+          </div>
+        </header>
+        {/* overscroll-contain: ohne das scrollt der Browser am Ende der Maske
+            einfach die Liste daneben weiter — genau das Durchrutschen, das
+            sich „dynamisch" anfuehlte. */}
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4">{children}</div>
+        {footer && <footer className="border-t border-border-subtle px-4 py-3">{footer}</footer>}
+      </section>
+    );
+  }
+  return (
+    <Modal open={!suspended} onClose={onClose} size="xl" title={title} subtitle={subtitle} headerAccessory={headerAccessory} footer={footer} bodyClassName="space-y-4">
+      {children}
+    </Modal>
+  );
+}
+
+const ACTIVITY_META: Record<ActivityType, { icon: React.ReactNode; cls: string; label: string }> = {
+  call: { icon: <PhoneCall className="size-4" />, cls: 'bg-status-info/15 text-status-info', label: 'Anruf' },
+  email: { icon: <Mail className="size-4" />, cls: 'bg-status-success/15 text-status-success', label: 'E-Mail' },
+  meeting: { icon: <Video className="size-4" />, cls: 'bg-accent-500/15 text-accent-500', label: 'Meeting' },
+  note: { icon: <FileText className="size-4" />, cls: 'bg-elevated text-text-secondary', label: 'Notiz' },
+  task: { icon: <CheckCircle className="size-4" />, cls: 'bg-status-warning/15 text-status-warning', label: 'Aufgabe' },
+  stage_change: { icon: <ArrowRight className="size-4" />, cls: 'bg-accent-500/15 text-accent-500', label: 'Statuswechsel' },
+};
+
+const LOG_TYPES: { type: ActivityType; label: string; icon: React.ReactNode }[] = [
+  { type: 'call', label: 'Anruf', icon: <PhoneCall className="size-3.5" /> },
+  { type: 'note', label: 'Notiz', icon: <FileText className="size-3.5" /> },
+  { type: 'email', label: 'E-Mail', icon: <Mail className="size-3.5" /> },
+  { type: 'meeting', label: 'Termin', icon: <Video className="size-3.5" /> },
+  { type: 'task', label: 'Aufgabe', icon: <CheckCircle className="size-3.5" /> },
+];
+
+// ── Termin-Helfer (floating wall-clock, wie KalenderView) ────────────────────
+const pad2 = (n: number) => String(n).padStart(2, '0');
+const dateKey = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const timeOf = (iso: string) => { const m = iso.match(/T(\d{2}):(\d{2})/); return m ? `${m[1]}:${m[2]}` : ''; };
+const WD_SHORT = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+
+/** "2026-07-24T14:30" → "Fr, 24.07. · 14:30" (heute/morgen als Wort). */
+function apptLabel(iso: string): string {
+  const day = iso.slice(0, 10);
+  const today = new Date();
+  const tomorrow = new Date(today.getTime() + 864e5);
+  let dayLabel: string;
+  if (day === dateKey(today)) dayLabel = 'Heute';
+  else if (day === dateKey(tomorrow)) dayLabel = 'Morgen';
+  else {
+    const d = new Date(`${day}T00:00`);
+    dayLabel = `${WD_SHORT[d.getDay()]}, ${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.`;
+  }
+  return `${dayLabel} · ${timeOf(iso)}`;
+}
+
+/** Termin liegt in der Vergangenheit (lokale Wall-Clock)? */
+function isOverdue(iso: string): boolean {
+  const now = new Date();
+  return iso.slice(0, 16) < `${dateKey(now)}T${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+}
+
+const CALL_TYPE_LABEL: Record<string, string> = { quali: 'Quali-Call', sales: 'Sales-Call', call: 'Rückruf', other: 'Termin' };
+
+function relTime(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (!t) return '';
+  const m = Math.floor((Date.now() - t) / 60000);
+  if (m < 1) return 'gerade eben';
+  if (m < 60) return `vor ${m} Min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `vor ${h} Std`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `vor ${d} T`;
+  return new Date(iso).toLocaleDateString('de-DE');
+}
+
+/** Exakter Zeitstempel „24.07.2026, 14:32 Uhr" aus dem echten Aktivitäts-Timestamp. */
+function exactStamp(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' Uhr';
+}
+
+function initials(name: string): string {
+  return (name || '?').split(/\s+/).map((s) => s[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || '?';
+}
+
+export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged, onOpenCalendar, variant = 'modal', navigation }: LeadDetailModalProps) {
+  const currentUser = getCurrentUser();
+  const phone = usePhone();
+  const hasCallNote = phone?.opened && phone.call?.leadId === lead.id && phone.call?.userId === currentUser?.id;
+  const currentName = currentUser?.username || currentUser?.name || '';
+  const isAdmin = currentUser?.role === 'manager' || Boolean(currentUser?.app_access?.admin);
+
+  // Lokale Spiegel: aktualisieren sich sofort nach einer Aktivität (vor Parent-Reload).
+  const [status, setStatus] = useState(lead.status);
+  const [dmName, setDmName] = useState(lead.decisionMakerName || '');
+  const [dmReached, setDmReached] = useState<boolean>(!!lead.reachedDecisionMaker);
+
+  const [detailTab, setDetailTab] = useState<'activity' | 'next' | 'info'>('activity');
+  const [activityError, setActivityError] = useState(false);
+  const [appointmentError, setAppointmentError] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
-  const [showActivityForm, setShowActivityForm] = useState(false);
-  const [newActivity, setNewActivity] = useState({
-    type: 'note' as Activity['type'],
-    title: '',
-    description: '',
-    date: new Date().toISOString().split('T')[0],
-  });
+  const [loading, setLoading] = useState(true);
 
-  // Prevent body scroll when modal is open
-  useEffect(() => {
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = 'unset';
-    };
-  }, []);
+  // Composer
+  const [logType, setLogType] = useState<ActivityType>('call');
+  const [note, setNote] = useState('');
+  const [reached, setReached] = useState<boolean | null>(null);
+  const [dmInput, setDmInput] = useState('');
+  const [moveTo, setMoveTo] = useState(lead.status);
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    void loadActivities();
+  // Inline-Bearbeitung
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editBody, setEditBody] = useState('');
+
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailState, setEmailState] = useState({dirty:false,busy:false});
+
+  // ── Geplante Anrufe / Rückrufe (echte Termine, verknüpft über companyId) ──
+  const [appts, setAppts] = useState<Appointment[]>([]);
+  const [admins, setAdmins] = useState<AppointmentAdmin[]>([]);
+  const [planOpen, setPlanOpen] = useState(false);
+  useWorkspaceGuard(Boolean(note.trim() || dmInput.trim() || reached !== null || moveTo !== status || editingId || emailState.dirty), saving || emailState.busy);
+
+  const reload = useCallback(async () => {
+    setLoading(true); setActivityError(false);
+    try { setActivities(await getActivities(lead.id)); } catch { setActivityError(true); } finally { setLoading(false); }
   }, [lead.id]);
 
-  const loadActivities = async () => {
+  useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => { const refresh = () => void reload(); window.addEventListener('crm:call-updated', refresh); return () => window.removeEventListener('crm:call-updated', refresh); }, [reload]);
+
+  const reloadAppts = useCallback(async () => {
+    setAppointmentError(false);
     try {
-      setActivities(await getActivities(lead.id));
-    } catch {
-      setActivities([]);
-    }
+      const rows = await getAppointments({ companyId: lead.id });
+      setAppts(rows.filter((a) => a.status === 'proposed' || a.status === 'confirmed'));
+    } catch { setAppointmentError(true); }
+  }, [lead.id]);
+
+  useEffect(() => { void reloadAppts(); }, [reloadAppts]);
+  useEffect(() => { getAppointmentAdmins().then(setAdmins).catch(() => undefined); }, []);
+
+  // Standard-Zuständiger = eingeloggter Nutzer (sobald Admins geladen sind).
+  const myAdminId = useMemo(
+    () => admins.find((a) => a.username?.toLowerCase() === (currentUser?.username || '').toLowerCase())?.id || '',
+    [admins, currentUser],
+  );
+  const callbackPlanner = useCallbackPlanner({leadId:lead.id,assigneeId:myAdminId,enabled:planOpen,onSaved:()=>{void reloadAppts();onLeadChanged?.();}});
+
+  const completeAppt = async (a: Appointment) => {
+    try { await updateAppointment(a.id, { status: 'completed' }); await reloadAppts(); onLeadChanged?.(); toast.success('Als erledigt markiert.'); }
+    catch (e: any) { toast.error(e.message || 'Fehlgeschlagen'); }
+  };
+  const removeAppt = async (a: Appointment) => {
+    if (!confirm('Geplanten Anruf wirklich absagen?')) return;
+    try { await cancelAppointment(a.id); await reloadAppts(); toast.success('Anruf abgesagt.'); }
+    catch (e: any) { toast.error(e.message || 'Absagen fehlgeschlagen'); }
   };
 
-  const handleSaveActivity = async () => {
-    if (newActivity.title) {
-      await saveActivity({
-        ...newActivity,
-        leadId: lead.id,
+  const stageChanged = !!moveTo && moveTo !== status;
+
+  const handleLog = async () => {
+    if (!note.trim() && !stageChanged && reached === null && !dmInput.trim()) {
+      toast.error('Notiz schreiben, Entscheider erfassen oder Status ändern.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await createActivity(lead.id, {
+        type: logType,
+        body: note.trim() || undefined,
+        reachedDecisionMaker: reached,
+        decisionMakerName: dmInput.trim() || undefined,
+        stageTo: stageChanged ? moveTo : undefined,
       });
-      await loadActivities();
-      setNewActivity({
-        type: 'note',
-        title: '',
-        description: '',
-        date: new Date().toISOString().split('T')[0],
-      });
-      setShowActivityForm(false);
+      setNote(''); setReached(null); setDmInput('');
+      if (stageChanged) setStatus(moveTo);
+      if (reached === true) setDmReached(true);
+      if (dmInput.trim()) setDmName(dmInput.trim());
+      await reload();
+      onLeadChanged?.();
+      toast.success(stageChanged ? `Protokolliert · verschoben nach „${moveTo}"` : 'Protokolliert.');
+    } catch (e: any) {
+      toast.error(e.message || 'Speichern fehlgeschlagen');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleToggleActivity = async (activity: Activity) => {
-    await saveActivity({
-      ...activity,
-      completed: !activity.completed,
-    });
-    await loadActivities();
+  const saveEdit = async (a: Activity) => {
+    try {
+      await updateActivity(lead.id, a.id, { body: editBody });
+      setEditingId(null);
+      await reload();
+    } catch (e: any) { toast.error(e.message || 'Bearbeiten fehlgeschlagen'); }
   };
 
-  const handleDeleteActivity = async (id: string) => {
-    if (confirm('Aktivität wirklich löschen?')) {
-      await deleteActivity(lead.id, id);
-      await loadActivities();
-    }
+  const removeActivity = async (a: Activity) => {
+    if (!confirm('Aktivität wirklich löschen?')) return;
+    try { await deleteActivity(lead.id, a.id); await reload(); }
+    catch (e: any) { toast.error(e.message || 'Löschen fehlgeschlagen'); }
   };
 
-  const statusColors: Record<string, string> = {
-    'Neu': 'bg-blue-100 text-blue-700 border-blue-200',
-    'Kontaktiert': 'bg-cyan-100 text-cyan-700 border-cyan-200',
-    'Qualifiziert': 'bg-green-100 text-green-700 border-green-200',
-    'Angebot': 'bg-yellow-100 text-yellow-700 border-yellow-200',
-    'Verhandlung': 'bg-orange-100 text-orange-700 border-orange-200',
-    'Gewonnen': 'bg-emerald-100 text-emerald-700 border-emerald-200',
-    'Verloren': 'bg-red-100 text-red-700 border-red-200',
+  const toggleTask = async (a: Activity) => {
+    try { await updateActivity(lead.id, a.id, { completed: !a.completed }); await reload(); }
+    catch (e: any) { toast.error(e.message || 'Fehlgeschlagen'); }
   };
 
-  const priorityColors: Record<string, string> = {
-    'Hoch': 'bg-red-100 text-red-700 border-red-200',
-    'Mittel': 'bg-yellow-100 text-yellow-700 border-yellow-200',
-    'Niedrig': 'bg-green-100 text-green-700 border-green-200',
-  };
-
-  const activityIcons = {
-    call: <PhoneCall className="w-4 h-4" />,
-    email: <Mail className="w-4 h-4" />,
-    meeting: <Video className="w-4 h-4" />,
-    note: <FileText className="w-4 h-4" />,
-    task: <CheckCircle className="w-4 h-4" />,
-  };
-
-  const activityColors = {
-    call: 'bg-blue-100 text-blue-700',
-    email: 'bg-green-100 text-green-700',
-    meeting: 'bg-purple-100 text-purple-700',
-    note: 'bg-gray-100 text-gray-700',
-    task: 'bg-orange-100 text-orange-700',
-  };
+  const canModify = (a: Activity) => isAdmin || (!!currentName && a.createdByName === currentName);
 
   return (
-    <div
-      className="fixed inset-0 bg-black bg-opacity-20 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto my-8 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="relative bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] p-6 md:p-8 rounded-t-2xl sticky top-0 z-10">
-          <div className="absolute top-6 right-6 flex items-center gap-2">
+    <><Shell
+      suspended={emailOpen}
+      variant={variant}
+      onClose={() => { if (mayLeaveWorkspace()) onClose(); }}
+      title={lead.company}
+      subtitle={lead.contactPerson}
+      headerAccessory={
+        <Button variant="secondary" size="sm" onClick={() => { if (mayLeaveWorkspace()) onEdit(lead); }}>
+          <Edit className="size-4" />
+          <span className="hidden sm:inline">Stammdaten</span>
+        </Button>
+      }
+      footer={
+        <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          <Button variant="ghost" size="sm" onClick={() => { if (mayLeaveWorkspace()) onDelete(); }}>
+            <Trash2 className="size-4" />
+            Löschen
+          </Button>
+          {navigation && <div className="ml-auto flex items-center gap-2" aria-label="Leads durchgehen">
+            <span className="text-xs tabular-nums text-text-muted">{navigation.index >= 0 ? (navigation.index + 1) + ' / ' + navigation.total : 'Außerhalb des Filters'}</span>
+            <IconButton aria-label="Vorheriger Lead" disabled={!navigation.previous || saving} onClick={navigation.previous}><ChevronLeft className="size-4"/></IconButton>
+            <Button variant="secondary" size="sm" disabled={!navigation.next || saving} onClick={navigation.next}>Nächster Lead<ChevronRight className="size-4"/></Button>
+          </div>}
+          {currentUser?.app_access?.admin && leadCategory({ status }) === 'won' && (
             <button
-              onClick={() => onEdit(lead)}
-              className="flex items-center gap-2 px-4 py-2 bg-white text-[#7c3aed] rounded-xl transition-all hover:shadow-lg font-medium"
+              onClick={() => window.open(buildOnboardingHandoffUrl(lead), '_blank', 'noopener')}
+              title="Öffnet den vorbefüllten Tenant-Wizard im Admin-Dashboard"
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-status-success/15 px-3.5 text-sm font-medium text-status-success ring-1 ring-inset ring-status-success/30 transition-colors hover:bg-status-success/25"
             >
-              <Edit className="w-4 h-4" />
-              <span className="hidden sm:inline">Bearbeiten</span>
+              <Rocket className="size-4" />
+              In Onboarding übergeben
             </button>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-white/20 rounded-xl transition-colors"
-            >
-              <X className="w-6 h-6 text-white" />
-            </button>
-          </div>
-
-          <div className="flex items-start gap-5">
-            <div className="w-16 h-16 md:w-20 md:h-20 bg-white rounded-2xl flex items-center justify-center shadow-xl flex-shrink-0">
-              <span className="text-2xl md:text-3xl font-bold text-[#7c3aed]">{lead.company[0]}</span>
-            </div>
-            <div className="flex-1 min-w-0 pr-32">
-              <h3 className="text-2xl md:text-3xl font-bold text-white mb-2 truncate">{lead.company}</h3>
-              <p className="text-purple-100 text-base md:text-lg mb-3">{lead.contactPerson}</p>
-              <div className="flex flex-wrap items-center gap-2 md:gap-3">
-                <span className={`px-3 md:px-4 py-1.5 md:py-2 rounded-xl font-semibold border-2 text-xs md:text-sm ${statusColors[lead.status]}`}>
-                  {lead.status}
-                </span>
-                {lead.priority && (
-                  <span className={`px-3 md:px-4 py-1.5 md:py-2 rounded-xl font-semibold border-2 text-xs md:text-sm ${priorityColors[lead.priority]}`}>
-                    {lead.priority}
-                  </span>
-                )}
-                {(lead.designScore || lead.leadScore) ? (() => {
-                  const score = lead.designScore || lead.leadScore || 0;
-                  let scoreColor = 'bg-gray-500';
-                  let scoreLabel = 'Score';
-                  if (score >= 70) { scoreColor = 'bg-red-500'; scoreLabel = 'Schlecht'; }
-                  else if (score >= 50) { scoreColor = 'bg-orange-500'; scoreLabel = 'Mäßig'; }
-                  else if (score >= 30) { scoreColor = 'bg-yellow-500'; scoreLabel = 'OK'; }
-                  else { scoreColor = 'bg-green-500'; scoreLabel = 'Gut'; }
-                  return (
-                    <span className={`px-3 md:px-4 py-1.5 md:py-2 ${scoreColor} text-white rounded-xl font-semibold text-xs md:text-sm`}>
-                      🎯 {score}/100 • {scoreLabel}
-                    </span>
-                  );
-                })() : null}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="border-b border-gray-200 px-6 md:px-8">
-          <div className="flex gap-4">
-            <button
-              onClick={() => setActiveTab('details')}
-              className={`px-4 py-3 font-semibold transition-colors relative ${activeTab === 'details'
-                  ? 'text-[#7c3aed]'
-                  : 'text-gray-500 hover:text-gray-700'
-                }`}
-            >
-              Details
-              {activeTab === 'details' && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#7c3aed]"></div>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab('activities')}
-              className={`px-4 py-3 font-semibold transition-colors relative ${activeTab === 'activities'
-                  ? 'text-[#7c3aed]'
-                  : 'text-gray-500 hover:text-gray-700'
-                }`}
-            >
-              Aktivitäten ({activities.length})
-              {activeTab === 'activities' && (
-                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#7c3aed]"></div>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* Content */}
-        <div className="p-6 md:p-8 max-h-[60vh] overflow-y-auto">
-          {activeTab === 'details' ? (
-            <div className="space-y-6 md:space-y-8">
-              {/* Value Card */}
-              <div className="bg-gradient-to-r from-purple-50 to-blue-50 p-5 md:p-6 rounded-2xl border-2 border-purple-200">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-600 font-medium mb-1">Geschätzter Wert</p>
-                    <p className="text-3xl md:text-4xl font-bold text-gray-900">€{lead.value?.toLocaleString() || '0'}</p>
-                  </div>
-                  {lead.nextFollowUpDate && (
-                    <div className="text-right">
-                      <p className="text-sm text-gray-600 font-medium mb-1">Nächstes Follow-up</p>
-                      <p className="text-base md:text-lg font-semibold text-gray-900">
-                        {new Date(lead.nextFollowUpDate).toLocaleDateString('de-DE')}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Contact Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
-                <div className="flex items-start gap-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
-                  <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-md flex-shrink-0">
-                    <User className="w-6 h-6 text-white" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-gray-500 font-medium">Kontaktperson</p>
-                    <p className="text-gray-900 font-semibold mt-1">{lead.contactPerson}</p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
-                  <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-green-600 rounded-xl flex items-center justify-center shadow-md flex-shrink-0">
-                    <Mail className="w-6 h-6 text-white" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-gray-500 font-medium">E-Mail</p>
-                    <a href={`mailto:${lead.email}`} className="text-[#7c3aed] hover:text-[#6d28d9] font-semibold mt-1 block truncate">
-                      {lead.email}
-                    </a>
-                  </div>
-                </div>
-
-                {lead.phone && (
-                  <div className="flex items-start gap-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
-                    <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl flex items-center justify-center shadow-md flex-shrink-0">
-                      <Phone className="w-6 h-6 text-white" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-gray-500 font-medium">Telefon</p>
-                      <a href={`tel:${lead.phone}`} className="text-[#7c3aed] hover:text-[#6d28d9] font-semibold mt-1 block">
-                        {lead.phone}
-                      </a>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex items-start gap-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
-                  <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl flex items-center justify-center shadow-md flex-shrink-0">
-                    <Building className="w-6 h-6 text-white" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-gray-500 font-medium">Firma</p>
-                    <p className="text-gray-900 font-semibold mt-1">{lead.company}</p>
-                  </div>
-                </div>
-
-                {lead.website && (
-                  <div className="flex items-start gap-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
-                    <div className="w-12 h-12 bg-gradient-to-br from-cyan-500 to-cyan-600 rounded-xl flex items-center justify-center shadow-md flex-shrink-0">
-                      <Globe className="w-6 h-6 text-white" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-gray-500 font-medium">Website</p>
-                      <a href={lead.website} target="_blank" rel="noopener noreferrer" className="text-[#7c3aed] hover:text-[#6d28d9] font-semibold mt-1 block truncate">
-                        {lead.website}
-                      </a>
-                    </div>
-                  </div>
-                )}
-
-                {(lead.city || lead.country) && (
-                  <div className="flex items-start gap-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
-                    <div className="w-12 h-12 bg-gradient-to-br from-pink-500 to-pink-600 rounded-xl flex items-center justify-center shadow-md flex-shrink-0">
-                      <MapPin className="w-6 h-6 text-white" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-gray-500 font-medium">Standort</p>
-                      <p className="text-gray-900 font-semibold mt-1">
-                        {lead.city}{lead.city && lead.country && ', '}{lead.country}
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Additional Info */}
-              {(lead.industry || lead.source || lead.assignedTo) && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {lead.industry && (
-                    <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
-                      <p className="text-sm text-gray-500 font-medium mb-1">Branche</p>
-                      <p className="text-gray-900 font-semibold">{lead.industry}</p>
-                    </div>
-                  )}
-                  {lead.source && (
-                    <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
-                      <p className="text-sm text-gray-500 font-medium mb-1">Quelle</p>
-                      <p className="text-gray-900 font-semibold">{lead.source}</p>
-                    </div>
-                  )}
-                  {lead.assignedTo && (
-                    <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
-                      <p className="text-sm text-gray-500 font-medium mb-1">Zugewiesen an</p>
-                      <p className="text-gray-900 font-semibold">{lead.assignedTo}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Tags */}
-              {lead.tags && lead.tags.length > 0 && (
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <TagIcon className="w-5 h-5 text-gray-500" />
-                    <h4 className="font-bold text-gray-900">Tags</h4>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {lead.tags.map(tag => (
-                      <span key={tag} className="px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium">
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Notes */}
-              {lead.notes && (
-                <div className="p-5 bg-gray-50 rounded-xl border border-gray-100">
-                  <h4 className="font-bold text-gray-900 mb-3">Notizen</h4>
-                  <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">{lead.notes}</p>
-                </div>
-              )}
-
-              {/* Dates */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                <div className="flex items-center gap-2 text-gray-600">
-                  <Calendar className="w-4 h-4" />
-                  <span>Erstellt: {new Date(lead.createdAt).toLocaleDateString('de-DE')}</span>
-                </div>
-                <div className="flex items-center gap-2 text-gray-600">
-                  <Clock className="w-4 h-4" />
-                  <span>Aktualisiert: {new Date(lead.updatedAt).toLocaleDateString('de-DE')}</span>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {/* Add Activity Button */}
-              <button
-                onClick={() => setShowActivityForm(!showActivityForm)}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white rounded-xl hover:shadow-lg hover:shadow-purple-500/30 transition-all duration-200 font-medium"
-              >
-                <Plus className="w-5 h-5" />
-                Neue Aktivität
-              </button>
-
-              {/* Activity Form */}
-              {showActivityForm && (
-                <div className="p-5 bg-gray-50 rounded-xl border border-gray-200 space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">Typ</label>
-                      <select
-                        value={newActivity.type}
-                        onChange={(e) => setNewActivity({ ...newActivity, type: e.target.value as Activity['type'] })}
-                        className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#7c3aed] focus:ring-opacity-20 focus:border-[#7c3aed] transition-all duration-200"
-                      >
-                        <option value="note">Notiz</option>
-                        <option value="call">Anruf</option>
-                        <option value="email">E-Mail</option>
-                        <option value="meeting">Meeting</option>
-                        <option value="task">Aufgabe</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">Datum</label>
-                      <input
-                        type="date"
-                        value={newActivity.date}
-                        onChange={(e) => setNewActivity({ ...newActivity, date: e.target.value })}
-                        className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#7c3aed] focus:ring-opacity-20 focus:border-[#7c3aed] transition-all duration-200"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Titel</label>
-                    <input
-                      type="text"
-                      value={newActivity.title}
-                      onChange={(e) => setNewActivity({ ...newActivity, title: e.target.value })}
-                      placeholder="z.B. Follow-up Anruf"
-                      className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#7c3aed] focus:ring-opacity-20 focus:border-[#7c3aed] transition-all duration-200"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Beschreibung</label>
-                    <textarea
-                      value={newActivity.description}
-                      onChange={(e) => setNewActivity({ ...newActivity, description: e.target.value })}
-                      rows={3}
-                      placeholder="Details zur Aktivität..."
-                      className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#7c3aed] focus:ring-opacity-20 focus:border-[#7c3aed] transition-all duration-200 resize-none"
-                    />
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setShowActivityForm(false)}
-                      className="flex-1 px-4 py-2.5 text-gray-700 hover:bg-gray-200 rounded-xl transition-colors font-medium"
-                    >
-                      Abbrechen
-                    </button>
-                    <button
-                      onClick={() => void handleSaveActivity()}
-                      className="flex-1 px-4 py-2.5 bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white rounded-xl hover:shadow-lg transition-all font-medium"
-                    >
-                      Speichern
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Activities List */}
-              <div className="space-y-3">
-                {activities.map(activity => (
-                  <div key={activity.id} className="p-4 bg-white rounded-xl border border-gray-200 hover:shadow-md transition-all">
-                    <div className="flex items-start gap-3">
-                      <div className={`w-10 h-10 ${activityColors[activity.type]} rounded-xl flex items-center justify-center flex-shrink-0`}>
-                        {activityIcons[activity.type]}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <div className="flex-1 min-w-0">
-                            <h5 className="font-semibold text-gray-900">{activity.title}</h5>
-                            <p className="text-sm text-gray-500">{new Date(activity.date).toLocaleDateString('de-DE')}</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {activity.type === 'task' && (
-                              <button
-                                onClick={() => void handleToggleActivity(activity)}
-                                className={`p-1.5 rounded-lg transition-colors ${activity.completed
-                                    ? 'bg-green-100 text-green-600'
-                                    : 'bg-gray-100 text-gray-400 hover:bg-green-50 hover:text-green-600'
-                                  }`}
-                              >
-                                <CheckCircle className="w-4 h-4" />
-                              </button>
-                            )}
-                            <button
-                              onClick={() => void handleDeleteActivity(activity.id)}
-                              className="p-1.5 hover:bg-red-50 text-red-500 rounded-lg transition-colors"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-                        {activity.description && (
-                          <p className="text-sm text-gray-600">{activity.description}</p>
-                        )}
-                        <p className="text-xs text-gray-400 mt-2">von {activity.createdBy}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                {activities.length === 0 && !showActivityForm && (
-                  <div className="text-center py-12 text-gray-400">
-                    <MessageSquare className="w-16 h-16 mx-auto mb-3 text-gray-300" />
-                    <p className="font-medium">Noch keine Aktivitäten</p>
-                    <p className="text-sm mt-1">Fügen Sie die erste Aktivität hinzu</p>
-                  </div>
-                )}
-              </div>
-            </div>
           )}
         </div>
+      }
+    >
+      {/* Status-Leiste */}
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge status={status} />
+        {lead.priority && <PriorityPill priority={lead.priority} />}
+        <Badge tone="neutral">{lead.contactPerson?.trim() ? 'Ansprechpartner erfasst' : 'Ansprechpartner fehlt'}</Badge>
+        {dmReached && (
+          <Badge tone="success">
+            <UserCheck className="mr-1 inline size-3" />Entscheider{dmName ? `: ${dmName}` : ''}
+          </Badge>
+        )}
+      </div>
 
-        {/* Actions */}
-        <div className="flex flex-col sm:flex-row items-center justify-between p-6 md:p-8 border-t border-gray-200 bg-gray-50 rounded-b-2xl gap-3">
+          {(lead.phone || lead.email || onOpenCalendar) && (
+            <div className="flex flex-wrap gap-2">
+              {lead.phone && (
+                <CallButton lead={lead} />
+              )}
+              {lead.email && (
+                <button type="button" onClick={()=>setEmailOpen(true)} className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-elevated px-3 text-sm font-medium text-text-secondary ring-1 ring-inset ring-border-subtle transition-colors hover:text-text-primary">
+                  <Mail className="size-4" />E-Mail
+                </button>
+              )}
+              {onOpenCalendar && <Button variant="secondary" size="sm" onClick={() => onOpenCalendar(lead)}><Calendar className="size-4" /> Zum Kalender</Button>}
+            </div>
+          )}
+
+      <nav aria-label="Leadbereich" className="flex gap-1 border-b border-border-subtle">{([{ id: 'activity', label: 'Aktivitäten' }, { id: 'next', label: 'Nächste Schritte' }, { id: 'info', label: 'Kontaktdaten' }] as const).map((tab) => <button type="button" key={tab.id} aria-pressed={detailTab === tab.id} onClick={() => setDetailTab(tab.id)} className={cn('border-b-2 px-3 py-3 text-sm font-medium', detailTab === tab.id ? 'border-accent-500 text-accent-500' : 'border-transparent text-text-secondary')}>{tab.label}</button>)}</nav>
+      <div className="space-y-4">
+        {/* ── Protokoll (Hauptbereich) — im Panel UNTER der Info-Karte ───── */}
+        <div hidden={detailTab !== 'activity'} className="space-y-5">
+          {/* Composer */}
+          {hasCallNote && <ActiveCallNote />}
+          <div hidden={Boolean(hasCallNote)} className="rounded-md border border-border-subtle bg-surface p-4"><h3 className="mb-3 text-sm font-semibold">Aktivität erfassen</h3>
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {LOG_TYPES.map((t) => (
+                <button
+                  key={t.type}
+                  type="button"
+                  onClick={() => setLogType(t.type)}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium ring-1 ring-inset transition-colors',
+                    logType === t.type
+                      ? 'bg-accent-500 text-white ring-accent-500'
+                      : 'bg-canvas text-text-secondary ring-border-subtle hover:text-text-primary',
+                  )}
+                >
+                  {t.icon}{t.label}
+                </button>
+              ))}
+            </div>
+
+            <textarea
+              aria-label="Gesprächsnotiz"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={3}
+              placeholder="Wie lief das Gespräch? Was wurde besprochen, was sind die nächsten Schritte?…"
+              className={cn(inputClass, 'resize-none py-2')}
+            />
+
+            <VoiceDictation leadId={lead.id} disabled={saving||Boolean(phone?.live)} onText={text=>setNote(previous=>previous.trim()?previous+"\n\n"+text:text)}/>
+
+            {/* Entscheider */}
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-canvas/60 p-2.5">
+              <button
+                type="button"
+                onClick={() => setReached(reached === true ? null : true)}
+                className={cn('inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium ring-1 ring-inset transition-colors',
+                  reached === true ? 'bg-status-success/15 text-status-success ring-status-success/30' : 'bg-canvas text-text-muted ring-border-subtle hover:text-text-primary')}
+              >
+                <UserCheck className="size-3.5" />Entscheider erreicht
+              </button>
+              <button
+                type="button"
+                onClick={() => setReached(reached === false ? null : false)}
+                className={cn('inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium ring-1 ring-inset transition-colors',
+                  reached === false ? 'bg-status-danger/15 text-status-danger ring-status-danger/30' : 'bg-canvas text-text-muted ring-border-subtle hover:text-text-primary')}
+              >
+                nicht erreicht
+              </button>
+              <input
+                value={dmInput}
+                onChange={(e) => setDmInput(e.target.value)}
+                placeholder="Name des Entscheiders"
+                className={cn(inputClass, 'h-9 min-w-[150px] flex-1')}
+              />
+            </div>
+
+            {/* Status danach + senden */}
+            <div className="mt-3 flex flex-wrap items-end gap-3">
+              <div className="min-w-[190px] flex-1">
+                <SectionLabel className="mb-1.5 block">Status danach</SectionLabel>
+                <CustomSelect value={moveTo} onChange={setMoveTo} options={getStatusOptions()} className="w-full" />
+              </div>
+              <Button onClick={handleLog} disabled={saving} className="h-10">
+                {saving ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                {stageChanged ? 'Speichern & verschieben' : 'Protokollieren'}
+              </Button>
+            </div>
+          </div>
+
+          {/* Timeline */}
+          <div className="space-y-3"><h3 className="text-sm font-semibold">Verlauf</h3>
+            {activityError && <LoadError message="Aktivitäten konnten nicht geladen werden." onRetry={() => void reload()} />}
+            {loading && (
+              <div className="flex items-center justify-center gap-2 py-8 text-sm text-text-muted">
+                <Loader2 className="size-4 animate-spin" />Protokoll wird geladen…
+              </div>
+            )}
+            <CallHistory key={lead.id} leadId={lead.id} />
+            {!loading && activities.map((a) => {
+              const meta = ACTIVITY_META[a.type] || ACTIVITY_META.note;
+              const isEditing = editingId === a.id;
+              return (
+                <div key={a.id} className="border-b border-border-subtle py-4">
+                  <div className="flex gap-3">
+                    <div className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg', meta.cls)}>{meta.icon}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold text-text-primary">{meta.label}</span>
+                        {a.stageFrom && a.stageTo && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-accent-500/10 px-2 py-0.5 text-xs font-medium text-accent-500">
+                            {a.stageFrom}<ArrowRight className="size-3" />{a.stageTo}
+                          </span>
+                        )}
+                        {a.type === 'task' && (
+                          <button
+                            type="button"
+                            onClick={() => toggleTask(a)}
+                            className={cn('inline-flex items-center gap-1 text-xs font-medium', a.completed ? 'text-status-success' : 'text-text-muted hover:text-text-primary')}
+                          >
+                            <CheckCircle className="size-3.5" />{a.completed ? 'erledigt' : 'als erledigt markieren'}
+                          </button>
+                        )}
+                      </div>
+
+                      {isEditing ? (
+                        <div className="mt-2 space-y-2">
+                          <textarea value={editBody} onChange={(e) => setEditBody(e.target.value)} rows={3} className={cn(inputClass, 'resize-none py-2')} />
+                          <div className="flex gap-2">
+                            <Button size="sm" onClick={() => saveEdit(a)}>Speichern</Button>
+                            <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>Abbrechen</Button>
+                          </div>
+                        </div>
+                      ) : (
+                        a.body && <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-text-secondary">{a.body}</p>
+                      )}
+
+                      {(a.reachedDecisionMaker != null || a.decisionMakerName) && (
+                        <div className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-elevated px-2 py-1 text-xs text-text-secondary">
+                          <UserCheck className={cn('size-3.5', a.reachedDecisionMaker ? 'text-status-success' : 'text-text-muted')} />
+                          {a.reachedDecisionMaker ? 'Entscheider erreicht' : a.reachedDecisionMaker === false ? 'Entscheider nicht erreicht' : 'Entscheider'}
+                          {a.decisionMakerName && <span className="font-medium text-text-primary">· {a.decisionMakerName}</span>}
+                        </div>
+                      )}
+
+                      <div className="mt-2.5 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 text-xs text-text-muted">
+                          <span className="flex size-5 items-center justify-center rounded-full bg-accent-500/15 text-[10px] font-semibold text-accent-500">{initials(a.createdByName)}</span>
+                          <span className="font-medium text-text-secondary">{a.createdByName}</span>
+                          {/* Exakte Uhrzeit an JEDEM Eintrag (+ relative Angabe als Kontext). */}
+                          <span className="font-medium text-text-secondary" title={exactStamp(a.createdAt)}>· {exactStamp(a.createdAt)}</span>
+                          <span className="text-text-muted">· {relTime(a.createdAt)}</span>
+                          {a.updatedAt && <span className="italic">· bearbeitet</span>}
+                        </div>
+                        {canModify(a) && !isEditing && (
+                          <div className="flex items-center gap-1">
+                            {a.body && (
+                              <IconButton className="size-7" onClick={() => { setEditingId(a.id); setEditBody(a.body); }} aria-label="Bearbeiten">
+                                <Pencil className="size-3.5" />
+                              </IconButton>
+                            )}
+                            <IconButton className="size-7" tone="danger" onClick={() => removeActivity(a)} aria-label="Löschen">
+                              <Trash2 className="size-3.5" />
+                            </IconButton>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {!loading && !activityError && activities.length === 0 && (
+              <EmptyState icon={<MessageSquare className="size-5" />} title="Noch kein Protokoll" description="Halte oben den ersten Anruf oder die erste Notiz fest." />
+            )}
+          </div>
+        </div>
+
+        {/* ── Info-Karte (kompakt) — im Panel ZUERST (Anrufen/Termine oben) ── */}
+        <div hidden={detailTab === "activity"} className="space-y-4">
+
           <button
-            onClick={onDelete}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200 font-medium border-2 border-red-200 hover:border-red-300"
+            type="button"
+            onClick={() => setEmailOpen(true)}
+            hidden={detailTab !== "info"}
+            title="Persönliche E-Mail an den Lead schreiben"
+            className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-elevated px-3 text-sm font-medium text-text-secondary ring-1 ring-inset ring-border-subtle transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-text-secondary"
           >
-            <Trash2 className="w-5 h-5" />
-            Löschen
+            <Mail className="size-4" />E-Mail schreiben
           </button>
-          <button
-            onClick={() => onEdit(lead)}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white rounded-xl hover:shadow-lg hover:shadow-purple-500/30 transition-all duration-200 font-medium"
-          >
-            <Edit className="w-5 h-5" />
-            Bearbeiten
-          </button>
+
+          {/* ── Geplante Anrufe / Rückrufe ─────────────────────────── */}
+          <div hidden={detailTab !== "next"} className="space-y-3 rounded-md border border-border-subtle bg-surface p-4">
+            {appointmentError && <LoadError message="Geplante Anrufe konnten nicht geladen werden." onRetry={() => void reloadAppts()} />}
+            <div className="mb-2 flex items-center justify-between">
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted">
+                <CalendarClock className="size-3.5" />Geplante Anrufe
+              </span>
+              <button
+                type="button"
+                hidden={planOpen}
+                onClick={() => setPlanOpen(true)}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset transition-colors',
+                  planOpen
+                    ? 'bg-elevated text-text-secondary ring-border-subtle'
+                    : 'bg-accent-500/15 text-accent-500 ring-accent-500/30 hover:bg-accent-500/25',
+                )}
+              >
+                {planOpen ? <><X className="size-3.5" />Schließen</> : <><Plus className="size-3.5" />Anruf planen</>}
+              </button>
+            </div>
+
+            {planOpen && <CallbackPlanner controller={callbackPlanner} admins={admins} onClose={()=>setPlanOpen(false)}/>}
+
+            {appts.length === 0 && !planOpen && !appointmentError && (
+              <p className="py-1 text-xs text-text-muted">Kein Anruf geplant.</p>
+            )}
+            {appts.length > 0 && (
+              <ul className="space-y-1.5">
+                {appts.map((a) => {
+                  const overdue = isOverdue(a.start_at);
+                  return (
+                    <li key={a.id} className="flex items-center gap-2 rounded-lg border border-border-subtle bg-canvas/60 p-2">
+                      <span className={cn(
+                        'flex size-7 shrink-0 items-center justify-center rounded-md',
+                        overdue ? 'bg-status-danger/15 text-status-danger' : 'bg-accent-500/10 text-accent-500',
+                      )}>
+                        <PhoneCall className="size-3.5" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className={cn('text-sm font-medium', overdue ? 'text-status-danger' : 'text-text-primary')}>
+                          {apptLabel(a.start_at)}
+                          {overdue && <span className="ml-1.5 text-[10px] font-semibold uppercase">überfällig</span>}
+                        </p>
+                        <p className="truncate text-xs text-text-muted">
+                          {CALL_TYPE_LABEL[a.type] || 'Termin'}
+                          {a.assignee_name ? ` · ${a.assignee_name}` : ''}
+                          {a.notes ? ` · ${a.notes}` : ''}
+                        </p>
+                      </div>
+                      <IconButton className="size-7" onClick={() => completeAppt(a)} aria-label="Als erledigt markieren" title="Erledigt">
+                        <CheckCircle className="size-3.5" />
+                      </IconButton>
+                      <IconButton className="size-7" tone="danger" onClick={() => removeAppt(a)} aria-label="Absagen" title="Absagen">
+                        <X className="size-3.5" />
+                      </IconButton>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          <div hidden={detailTab !== "info"} className="space-y-4">
+          <div className="space-y-1 border-b border-border-subtle pb-4">
+            <InfoRow icon={<User className="size-4" />} label="Kontakt" value={lead.contactPerson || '—'} />
+            {lead.phone && <InfoRow icon={<Phone className="size-4" />} label="Telefon" value={lead.phone} />}
+            {lead.email && <InfoRow icon={<Mail className="size-4" />} label="E-Mail" value={lead.email} />}
+            {lead.website && (
+              <InfoRow icon={<Globe className="size-4" />} label="Website" value={
+                <a href={safeWebsiteUrl(lead.website)} target="_blank" rel="noopener noreferrer" className="text-accent-500 hover:text-accent-500">{lead.website.replace(/^https?:\/\//, '')}</a>
+              } />
+            )}
+            {(lead.city || lead.country) && <InfoRow icon={<MapPin className="size-4" />} label="Standort" value={`${lead.city || ''}${lead.city && lead.country ? ', ' : ''}${lead.country || ''}`} />}
+            {lead.industry && <InfoRow icon={<Briefcase className="size-4" />} label="Branche" value={lead.industry} />}
+            {lead.source && <InfoRow icon={<TagIcon className="size-4" />} label="Quelle" value={lead.source} />}
+            {lead.assignedTo && <InfoRow icon={<User className="size-4" />} label="Zugewiesen" value={lead.assignedTo} />}
+            {!!lead.value && <InfoRow icon={<Star className="size-4" />} label="Wert" value={`€${lead.value.toLocaleString('de-DE')}`} />}
+            {dmName && <InfoRow icon={<UserCheck className="size-4" />} label="Entscheider" value={dmName} />}
+          </div>
+
+          {lead.tags && lead.tags.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {lead.tags.map((tag) => <Badge key={tag} tone="accent">{tag}</Badge>)}
+            </div>
+          )}
+
+          {lead.notes && (
+            <div className="rounded-xl border border-border-subtle bg-elevated/40 p-3">
+              <p className="mb-1 text-xs font-medium text-text-muted">Stamm-Notiz</p>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-secondary">{lead.notes}</p>
+            </div>
+          )}
+
+          <div className="space-y-1.5 px-1 text-xs text-text-muted">
+            {lead.createdAt && (
+              <div className="flex items-center gap-2"><Calendar className="size-3.5" />Erstellt: {new Date(lead.createdAt).toLocaleDateString('de-DE')}</div>
+            )}
+            {lead.nextFollowUpDate && (
+              <div className="flex items-center gap-2"><Clock className="size-3.5" />Follow-up: {new Date(lead.nextFollowUpDate).toLocaleDateString('de-DE')}</div>
+            )}
+          </div>
+          </div>
         </div>
       </div>
+    </Shell>{emailOpen && <LeadEmailComposer leadId={lead.id} conversationNotes={(hasCallNote?phone?.notes?.text:note)||''} onState={setEmailState} onClose={()=>setEmailOpen(false)} onSent={()=>{void reload();onLeadChanged?.();}}/>}</>
+  );
+}
+
+function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2.5 py-1.5">
+      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-accent-500/10 text-accent-500">{icon}</span>
+      <span className="w-20 shrink-0 text-xs text-text-muted">{label}</span>
+      <span className="min-w-0 flex-1 break-words text-sm font-medium text-text-primary">{value}</span>
     </div>
   );
 }

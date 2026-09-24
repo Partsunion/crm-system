@@ -27,22 +27,22 @@ export class ErrorBoundary extends Component<Props, State> {
     public render() {
         if (this.state.hasError) {
             return (
-                <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-                    <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-8 text-center border border-gray-100">
+                <div className="min-h-screen flex items-center justify-center bg-[var(--bg-canvas)] p-4">
+                    <div className="bg-[var(--bg-surface)] rounded-2xl shadow-xl max-w-lg w-full p-8 text-center border border-[var(--border)]">
                         <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6">
                             <AlertTriangle className="w-8 h-8 text-red-500" />
                         </div>
 
-                        <h1 className="text-2xl font-bold text-gray-900 mb-2">
+                        <h1 className="text-2xl font-bold text-[var(--text-primary)] mb-2">
                             Ein Fehler ist aufgetreten
                         </h1>
 
-                        <p className="text-gray-500 mb-6">
+                        <p className="text-[var(--text-muted)] mb-6">
                             Das CRM konnte nicht geladen werden. Meistens liegt das an einer fehlenden API-Verbindung oder falschen Konfiguration.
                         </p>
 
                         {this.state.error && (
-                            <div className="bg-gray-50 rounded-xl p-4 mb-6 text-left overflow-auto max-h-40 border border-gray-200">
+                            <div className="bg-[var(--bg-canvas)] rounded-xl p-4 mb-6 text-left overflow-auto max-h-40 border border-[var(--border)]">
                                 <p className="font-mono text-xs text-red-600 break-all">
                                     {this.state.error.toString()}
                                 </p>
@@ -58,7 +58,7 @@ export class ErrorBoundary extends Component<Props, State> {
                                 Seite neu laden
                             </button>
 
-                            <div className="text-xs text-gray-400 pt-4 border-t border-gray-100">
+                            <div className="text-xs text-[var(--text-muted)] pt-4 border-t border-[var(--border)]">
                                 Tipp: Prüfe die VITE_API_URL Umgebungsvariable auf Render.
                             </div>
                         </div>

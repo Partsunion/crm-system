@@ -1,0 +1,31 @@
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { AccountSecurity } from './AccountSecurity';
+import { mfaRequest } from '../utils/storage';
+vi.mock('../utils/storage', () => ({ mfaRequest: vi.fn(), accountRequest: vi.fn(), getCurrentUser: () => ({ username: 'seller', role: 'sales' }) }));
+beforeEach(() => { vi.mocked(mfaRequest).mockReset(); });
+afterEach(cleanup);
+it('enrolls a CRM salesperson and requires recovery-code acknowledgement', async () => {
+  vi.mocked(mfaRequest).mockResolvedValueOnce({ enabled: false }).mockResolvedValueOnce({ secret: 'TEST-ONLY-SETUP', otpauth_url: 'otpauth://totp/test' }).mockResolvedValueOnce({ enabled: true, backup_codes: ['test-code-1', 'test-code-2'] });
+  const user = userEvent.setup(); render(<AccountSecurity onPasswordChanged={vi.fn()} />);
+  await screen.findByText('Noch nicht eingerichtet');
+  await user.type(screen.getByLabelText(/Aktuelles Passwort bestätigen/), 'test-passphrase');
+  await user.click(screen.getByRole('button', { name: 'Authenticator einrichten' }));
+  await screen.findByText('TEST-ONLY-SETUP');
+  await user.type(screen.getByLabelText(/Code aus der Authenticator-App/), '123456');
+  await user.click(screen.getByRole('button', { name: 'Aktivierung bestätigen' }));
+  await screen.findByText('test-code-1');
+  expect((screen.getByRole('button', { name: 'Codes ausblenden' }) as HTMLButtonElement).disabled).toBe(true);
+  await user.click(screen.getByLabelText('Ich habe die Codes sicher aufbewahrt.'));
+  await user.click(screen.getByRole('button', { name: 'Codes ausblenden' }));
+  expect(screen.queryByText('test-code-1')).toBeNull();
+  expect(mfaRequest).toHaveBeenCalledWith('confirm', { code: '123456' });
+});
+it('shows retry instead of claiming MFA is disabled when status cannot load', async () => {
+  vi.mocked(mfaRequest).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ enabled: true });
+  const user = userEvent.setup(); render(<AccountSecurity onPasswordChanged={vi.fn()} />);
+  await screen.findByRole('alert'); expect(screen.queryByText('Noch nicht eingerichtet')).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Erneut versuchen' }));
+  await waitFor(() => expect(screen.getByText('Zwei-Faktor-Anmeldung aktiviert')).toBeTruthy());
+});
