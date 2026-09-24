@@ -81,9 +81,6 @@ export interface PipelineStage {
   isActive: boolean;
 }
 
-const LEADS_KEY = 'haendler_crm_leads';
-const ACTIVITIES_KEY = 'haendler_crm_activities';
-const SETTINGS_KEY = 'haendler_crm_settings';
 const USERS_KEY = 'haendler_crm_users';
 const PASSWORDS_KEY = 'haendler_crm_passwords';
 const CURRENT_USER_KEY = 'partsunion_crm_current_user';
@@ -270,6 +267,42 @@ export async function restoreCrmSession(): Promise<User | null> {
   }
 }
 
+export interface DemoRequest {
+  id: string;
+  crm_lead_id: string | null;
+  status: string;
+  vin_allowance: number;
+  requested_at: string;
+  access_sent_at: string | null;
+  expires_at: string | null;
+  follow_up_at: string | null;
+}
+
+export async function getDemoRequests(): Promise<DemoRequest[]> {
+  const response = await crmFetch('/api/crm/demo-requests');
+  if (!response.ok) throw new Error('Demo-Status konnte nicht geladen werden.');
+  const payload = await response.json();
+  return Array.isArray(payload.demo_requests) ? payload.demo_requests : [];
+}
+
+export async function requestDemo(input: {
+  leadId: string;
+  contactName: string;
+  email?: string;
+  phone?: string;
+  followUpAt?: string;
+  notes: string;
+}): Promise<DemoRequest> {
+  const response = await crmFetch('/api/crm/demo-requests', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': `crm-demo:${crypto.randomUUID()}` },
+    body: JSON.stringify(input),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload?.error || 'Demo-Anfrage konnte nicht übergeben werden.');
+  return payload.demo_request;
+}
+
 export async function getLeads(): Promise<Lead[]> {
   try {
     const res = await crmFetch('/api/crm/leads');
@@ -379,37 +412,87 @@ export async function startRadiusSearch(
   }
 }
 
-// ... Keep other LocalStorage functions (Users, Settings) as they are for now?
-// Actually, user wants "CRM Data" persisted. Users/Settings might be fine local for now?
-// Let's stick to LEADS for the main InvenTree integration.
+export async function getActivities(leadId: string): Promise<Activity[]> {
+  const response = await crmFetch(`/api/crm/leads/${encodeURIComponent(leadId)}/activities`);
+  if (!response.ok) throw new Error('Aktivitäten konnten nicht geladen werden.');
+  const rows = await response.json();
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row: Record<string, unknown>) => {
+    const body = String(row.body || '');
+    const [firstLine, ...rest] = body.split('\n');
+    const rawType = String(row.type || 'note');
+    const type: Activity['type'] = ['note', 'call', 'email', 'meeting', 'task'].includes(rawType)
+      ? rawType as Activity['type']
+      : 'note';
+    return {
+      id: String(row.id),
+      leadId: String(row.leadId || leadId),
+      type,
+      title: firstLine || 'Aktivität',
+      description: rest.join('\n'),
+      date: String(row.createdAt || new Date().toISOString()).slice(0, 10),
+      completed: Boolean(row.completed),
+      createdBy: String(row.createdByName || 'Unbekannt'),
+      createdAt: String(row.createdAt || new Date().toISOString()),
+    };
+  });
+}
 
-// Dummy/LocalStorage implementation for Activities/Settings for now to avoid breaking too much
-// We can migrate them later.
+export async function saveActivity(activity: Partial<Activity> & { leadId: string }): Promise<void> {
+  const body = [activity.title?.trim(), activity.description?.trim()].filter(Boolean).join('\n');
+  const response = await crmFetch(
+    activity.id
+      ? `/api/crm/leads/${encodeURIComponent(activity.leadId)}/activities/${encodeURIComponent(activity.id)}`
+      : `/api/crm/leads/${encodeURIComponent(activity.leadId)}/activities`,
+    {
+      method: activity.id ? 'PATCH' : 'POST',
+      body: JSON.stringify({ type: activity.type || 'note', body, completed: activity.completed ?? false }),
+    },
+  );
+  if (!response.ok) throw new Error((await response.json())?.error || 'Aktivität konnte nicht gespeichert werden.');
+}
 
-export function getActivities(leadId?: string): Activity[] {
-  try {
-    const data = localStorage.getItem(ACTIVITIES_KEY);
-    const activities = data ? JSON.parse(data) : [];
-    return leadId ? activities.filter((a: Activity) => a.leadId === leadId) : activities;
-  } catch (error) {
-    return [];
-  }
+export async function deleteActivity(leadId: string, id: string): Promise<void> {
+  const response = await crmFetch(
+    `/api/crm/leads/${encodeURIComponent(leadId)}/activities/${encodeURIComponent(id)}`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok) throw new Error('Aktivität konnte nicht gelöscht werden.');
 }
-// ... (rest of simple storage functions remain, or we can stub them)
-export function saveActivity(activity: Partial<Activity>): void {
-  // LocalStorage fallback for activities
-  const activities = getActivities();
-  // ... (logic)
-  localStorage.setItem(ACTIVITIES_KEY, JSON.stringify(activities));
+
+let currentSettings: Settings = defaultSettings;
+
+function normalizeSettings(value: unknown): Settings {
+  const row = value && typeof value === 'object' && !Array.isArray(value) ? value as Partial<Settings> : {};
+  return {
+    ...defaultSettings,
+    ...row,
+    pipelineStages: Array.isArray(row.pipelineStages) ? row.pipelineStages : defaultSettings.pipelineStages,
+    sources: Array.isArray(row.sources) ? row.sources : defaultSettings.sources,
+    industries: Array.isArray(row.industries) ? row.industries : defaultSettings.industries,
+    tags: Array.isArray(row.tags) ? row.tags : defaultSettings.tags,
+    statuses: Array.isArray(row.statuses) ? row.statuses : defaultSettings.statuses,
+  };
 }
-export function deleteActivity(id: string): void {
-  // LocalStorage fallback
+
+export async function loadCrmSettings(): Promise<Settings> {
+  const response = await crmFetch('/api/crm/settings');
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload?.error || 'CRM-Einstellungen konnten nicht geladen werden.');
+  currentSettings = normalizeSettings(payload?.settings);
+  return currentSettings;
 }
+
 export function getSettings(): Settings {
-  // LocalStorage fallback
-  const data = localStorage.getItem(SETTINGS_KEY);
-  return data ? { ...defaultSettings, ...JSON.parse(data) } : defaultSettings;
+  return currentSettings;
 }
-export function saveSettings(settings: Settings): void {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+
+export async function saveSettings(settings: Settings): Promise<void> {
+  const response = await crmFetch('/api/crm/settings', {
+    method: 'PUT',
+    body: JSON.stringify({ settings }),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload?.error || 'CRM-Einstellungen konnten nicht gespeichert werden.');
+  currentSettings = normalizeSettings(payload?.settings ?? settings);
 }

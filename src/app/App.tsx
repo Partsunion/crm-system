@@ -9,7 +9,7 @@ import { PipelineSettings } from './components/PipelineSettings';
 
 import { OutreachView } from './components/OutreachView';
 import { LayoutDashboard, Users, Workflow, Settings as SettingsIcon, Sparkles, Menu, X, LogOut, UserCog, Layers, Mail } from 'lucide-react';
-import { logout, getCurrentUser, restoreCrmSession } from './utils/storage';
+import { logout, getCurrentUser, restoreCrmSession, loadCrmSettings } from './utils/storage';
 
 export default function App() {
   const [activeView, setActiveView] = useState<'dashboard' | 'leads' | 'pipeline' | 'outreach' | 'settings' | 'users' | 'pipelineSettings'>('dashboard');
@@ -22,7 +22,10 @@ export default function App() {
   useEffect(() => {
     let active = true;
     void restoreCrmSession()
-      .then((user) => { if (active) setLoggedIn(Boolean(user)); })
+      .then(async (user) => {
+        if (user) await loadCrmSettings();
+        if (active) setLoggedIn(Boolean(user));
+      })
       .catch(() => { if (active) setLoggedIn(false); })
       .finally(() => { if (active) setCheckingSession(false); });
     return () => { active = false; };
@@ -50,7 +53,11 @@ export default function App() {
   }
 
   if (!loggedIn) {
-    return <Login onLogin={() => setLoggedIn(true)} />;
+    return <Login onLogin={() => {
+      void loadCrmSettings()
+        .catch((error) => console.error('CRM-Einstellungen konnten nach dem Login nicht geladen werden:', error))
+        .finally(() => setLoggedIn(true));
+    }} />;
   }
 
   return (

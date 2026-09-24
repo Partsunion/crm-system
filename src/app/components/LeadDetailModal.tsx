@@ -29,20 +29,24 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete }: LeadDetailM
   }, []);
 
   useEffect(() => {
-    loadActivities();
+    void loadActivities();
   }, [lead.id]);
 
-  const loadActivities = () => {
-    setActivities(getActivities(lead.id));
+  const loadActivities = async () => {
+    try {
+      setActivities(await getActivities(lead.id));
+    } catch {
+      setActivities([]);
+    }
   };
 
-  const handleSaveActivity = () => {
+  const handleSaveActivity = async () => {
     if (newActivity.title) {
-      saveActivity({
+      await saveActivity({
         ...newActivity,
         leadId: lead.id,
       });
-      loadActivities();
+      await loadActivities();
       setNewActivity({
         type: 'note',
         title: '',
@@ -53,18 +57,18 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete }: LeadDetailM
     }
   };
 
-  const handleToggleActivity = (activity: Activity) => {
-    saveActivity({
+  const handleToggleActivity = async (activity: Activity) => {
+    await saveActivity({
       ...activity,
       completed: !activity.completed,
     });
-    loadActivities();
+    await loadActivities();
   };
 
-  const handleDeleteActivity = (id: string) => {
+  const handleDeleteActivity = async (id: string) => {
     if (confirm('Aktivität wirklich löschen?')) {
-      deleteActivity(id);
-      loadActivities();
+      await deleteActivity(lead.id, id);
+      await loadActivities();
     }
   };
 
@@ -419,7 +423,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete }: LeadDetailM
                       Abbrechen
                     </button>
                     <button
-                      onClick={handleSaveActivity}
+                      onClick={() => void handleSaveActivity()}
                       className="flex-1 px-4 py-2.5 bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white rounded-xl hover:shadow-lg transition-all font-medium"
                     >
                       Speichern
@@ -445,7 +449,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete }: LeadDetailM
                           <div className="flex items-center gap-2">
                             {activity.type === 'task' && (
                               <button
-                                onClick={() => handleToggleActivity(activity)}
+                                onClick={() => void handleToggleActivity(activity)}
                                 className={`p-1.5 rounded-lg transition-colors ${activity.completed
                                     ? 'bg-green-100 text-green-600'
                                     : 'bg-gray-100 text-gray-400 hover:bg-green-50 hover:text-green-600'
@@ -455,7 +459,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete }: LeadDetailM
                               </button>
                             )}
                             <button
-                              onClick={() => handleDeleteActivity(activity.id)}
+                              onClick={() => void handleDeleteActivity(activity.id)}
                               className="p-1.5 hover:bg-red-50 text-red-500 rounded-lg transition-colors"
                             >
                               <Trash2 className="w-4 h-4" />

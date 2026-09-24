@@ -9,9 +9,13 @@ export function Settings() {
   const [newIndustry, setNewIndustry] = useState('');
   const [newTag, setNewTag] = useState('');
 
-  const handleSave = () => {
-    saveSettings(settings);
-    alert('✅ Einstellungen erfolgreich gespeichert!');
+  const handleSave = async () => {
+    try {
+      await saveSettings(settings);
+      alert('✅ Einstellungen erfolgreich gespeichert!');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Einstellungen konnten nicht gespeichert werden.');
+    }
   };
 
   const addStatus = () => {
@@ -99,7 +103,7 @@ export function Settings() {
           <p className="text-gray-500 mt-1 text-sm md:text-base">Passen Sie Ihr CRM-System an Ihre Bedürfnisse an</p>
         </div>
         <button
-          onClick={handleSave}
+          onClick={() => void handleSave()}
           className="flex items-center justify-center gap-2 px-5 py-3 md:px-6 md:py-3 bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white rounded-xl hover:shadow-lg hover:shadow-purple-500/30 transition-all duration-200 font-medium"
         >
           <Save className="w-4 h-4 md:w-5 md:h-5" />
@@ -349,7 +353,7 @@ export function Settings() {
       {/* Save Button - Bottom */}
       <div className="flex justify-end pt-4">
         <button
-          onClick={handleSave}
+          onClick={() => void handleSave()}
           className="w-full sm:w-auto flex items-center justify-center gap-3 px-6 py-3 md:px-8 md:py-4 bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white rounded-xl hover:shadow-xl hover:shadow-purple-500/30 transition-all duration-200 font-semibold text-base md:text-lg"
         >
           <Save className="w-5 h-5 md:w-6 md:h-6" />

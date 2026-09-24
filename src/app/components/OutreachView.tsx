@@ -5,8 +5,7 @@ import {
   ArrowRight, Search, RefreshCw, Loader2, MailCheck, MailX, MailOpen,
   Power, Rocket, Settings, ChevronDown
 } from 'lucide-react';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://website-crm-scraper-backend-production.up.railway.app';
+import { API_BASE_URL, crmFetch } from '../utils/storage';
 
 interface AutoPilotStatus {
   running: boolean;
@@ -98,7 +97,7 @@ export function OutreachView() {
 
   const loadStats = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/outreach/stats`);
+      const res = await crmFetch('/api/outreach/stats');
       if (res.ok) {
         const data = await res.json();
         setStats(data);
@@ -118,7 +117,7 @@ export function OutreachView() {
 
   const loadBundeslaender = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/outreach/discover/bundeslaender`);
+      const res = await crmFetch('/api/outreach/discover/bundeslaender');
       if (res.ok) {
         const data = await res.json();
         setBundeslaender(data);
@@ -162,7 +161,7 @@ export function OutreachView() {
         maxEmailsPerBatch: cfgMaxEmails,
         maxDiscoveryPerRun: cfgMaxDiscovery,
       };
-      const res = await fetch(`${API_BASE_URL}/api/outreach/${endpoint}`, {
+      const res = await crmFetch(`/api/outreach/${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -188,7 +187,7 @@ export function OutreachView() {
     setDiscovering(true);
     setStatusMessage({ type: 'info', text: `Suche ${selectedNische} in ${selectedBundesland}...` });
     try {
-      const res = await fetch(`${API_BASE_URL}/api/outreach/discover`, {
+      const res = await crmFetch('/api/outreach/discover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bundesland: selectedBundesland, niche: selectedNische })
@@ -211,7 +210,7 @@ export function OutreachView() {
     setSendingCampaign(true);
     setStatusMessage({ type: 'info', text: 'Kampagne wird gestartet...' });
     try {
-      const res = await fetch(`${API_BASE_URL}/api/outreach/campaign`, {
+      const res = await crmFetch('/api/outreach/campaign', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ limit: cfgMaxEmails })
