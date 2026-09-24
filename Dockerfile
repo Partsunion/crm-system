@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1.6
+
+FROM node:22.23.2-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS builder
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund --no-progress
+
+COPY . .
+
+ARG VITE_API_BASE_URL
+ARG VITE_APP_VERSION=crm-system@unversioned
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
+    VITE_APP_VERSION=$VITE_APP_VERSION
+
+RUN npm run build
+
+FROM nginxinc/nginx-unprivileged:1.30.4-alpine3.24@sha256:9b87ad3dd9f431c733f19dfb278c7eb3dba9dca381942c79818bb42f1a566a83
+
+ARG VCS_REF=unknown
+ARG BUILD_DATE=unknown
+ARG APP_RELEASE=crm-system@unversioned
+ARG VCS_REPOSITORY=https://github.com/Partsunion/crm-system
+LABEL org.opencontainers.image.source="$VCS_REPOSITORY" \
+      org.opencontainers.image.revision="$VCS_REF" \
+      org.opencontainers.image.created="$BUILD_DATE" \
+      org.opencontainers.image.version="$APP_RELEASE"
+
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/templates/default.conf.template
+
+ENV PORT=5000
+EXPOSE 5000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD wget -q --spider "http://127.0.0.1:${PORT}/" || exit 1
+
+USER 101
+CMD ["nginx", "-g", "daemon off;"]
