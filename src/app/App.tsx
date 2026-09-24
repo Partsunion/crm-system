@@ -9,24 +9,45 @@ import { PipelineSettings } from './components/PipelineSettings';
 
 import { OutreachView } from './components/OutreachView';
 import { LayoutDashboard, Users, Workflow, Settings as SettingsIcon, Sparkles, Menu, X, LogOut, UserCog, Layers, Mail } from 'lucide-react';
-import { isLoggedIn, logout, getCurrentUser } from './utils/storage';
+import { logout, getCurrentUser, restoreCrmSession } from './utils/storage';
 
 export default function App() {
   const [activeView, setActiveView] = useState<'dashboard' | 'leads' | 'pipeline' | 'outreach' | 'settings' | 'users' | 'pipelineSettings'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
-  const [loggedIn, setLoggedIn] = useState(isLoggedIn());
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
   const currentUser = getCurrentUser();
+
+  useEffect(() => {
+    let active = true;
+    void restoreCrmSession()
+      .then((user) => { if (active) setLoggedIn(Boolean(user)); })
+      .catch(() => { if (active) setLoggedIn(false); })
+      .finally(() => { if (active) setCheckingSession(false); });
+    return () => { active = false; };
+  }, []);
 
   const handleNavigate = (view: 'dashboard' | 'leads' | 'pipeline' | 'outreach' | 'settings' | 'users' | 'pipelineSettings') => {
     setActiveView(view);
     setIsMobileMenuOpen(false);
   };
 
-  const handleLogout = () => {
-    logout();
-    setLoggedIn(false);
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } finally {
+      setLoggedIn(false);
+    }
   };
+
+  if (checkingSession) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#7c3aed] via-[#a78bfa] to-[#7c3aed] flex items-center justify-center text-white font-semibold">
+        Sitzung wird geprüft …
+      </div>
+    );
+  }
 
   if (!loggedIn) {
     return <Login onLogin={() => setLoggedIn(true)} />;
@@ -72,7 +93,7 @@ export default function App() {
                 </div>
               </div>
               <button
-                onClick={handleLogout}
+                onClick={() => void handleLogout()}
                 className="flex items-center gap-2 px-4 py-2.5 text-gray-600 hover:text-gray-900 hover:bg-gradient-to-r hover:from-red-50 hover:to-transparent rounded-xl transition-all border border-transparent hover:border-red-100"
                 title="Abmelden"
               >

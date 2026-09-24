@@ -11,23 +11,24 @@ export function Login({ onLogin }: LoginProps) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [totpCode, setTotpCode] = useState('');
+  const [mfaRequired, setMfaRequired] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
-    setTimeout(() => {
-      const user = login(username, password);
-
-      if (user) {
-        onLogin();
-      } else {
-        setError('Ungültige Anmeldedaten. Bitte versuchen Sie es erneut.');
-      }
-
+    try {
+      await login(username, password, totpCode || undefined);
+      onLogin();
+    } catch (cause) {
+      const loginError = cause as Error & { code?: string };
+      if (loginError.code === 'MFA_REQUIRED') setMfaRequired(true);
+      setError(loginError.message || 'Ungültige Anmeldedaten. Bitte versuchen Sie es erneut.');
+    } finally {
       setLoading(false);
-    }, 500);
+    }
   };
 
   return (
@@ -82,6 +83,24 @@ export function Login({ onLogin }: LoginProps) {
                 className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#7c3aed] focus:ring-opacity-20 focus:border-[#7c3aed] transition-all duration-200"
               />
             </div>
+
+            {mfaRequired && (
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Authenticator-Code
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value)}
+                  required
+                  placeholder="6-stelliger Code"
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#7c3aed] focus:ring-opacity-20 focus:border-[#7c3aed] transition-all duration-200"
+                />
+              </div>
+            )}
 
             {/* Submit Button */}
             <button

@@ -86,7 +86,7 @@ const ACTIVITIES_KEY = 'haendler_crm_activities';
 const SETTINGS_KEY = 'haendler_crm_settings';
 const USERS_KEY = 'haendler_crm_users';
 const PASSWORDS_KEY = 'haendler_crm_passwords';
-const CURRENT_USER_KEY = 'haendler_crm_current_user';
+const CURRENT_USER_KEY = 'partsunion_crm_current_user';
 
 const defaultSettings: Settings = {
   pipelineStages: [
@@ -188,29 +188,37 @@ export function getUserPassword(username: string): string | null {
   return passwords[username] || null;
 }
 
-// Login
-export function login(username: string, password: string): User | null {
-  initializeUsers();
-  const users = getUsers();
-  const passwords = JSON.parse(localStorage.getItem(PASSWORDS_KEY) || '{}');
-
-  const user = users.find(u => u.username === username && u.active);
-  if (user && passwords[username] === password) {
-    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
-    return user;
+// Login — the old CRM presentation remains unchanged, but credentials are
+// verified by the shared Partsunion backend instead of browser localStorage.
+export async function login(username: string, password: string, totpCode?: string): Promise<User> {
+  const response = await crmFetch('/api/admin-auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password, app: 'crm', ...(totpCode ? { totp_code: totpCode } : {}) }),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    const error = new Error(payload?.error || payload?.message || 'Ungültige Anmeldedaten.') as Error & { code?: string };
+    error.code = payload?.code;
+    throw error;
   }
-
-  return null;
+  const user = internalUser(payload.user);
+  sessionStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+  return user;
 }
 
 // Logout
-export function logout() {
-  localStorage.removeItem(CURRENT_USER_KEY);
+export async function logout(): Promise<void> {
+  const response = await crmFetch('/api/admin-auth/logout', {
+    method: 'POST',
+    body: JSON.stringify({ app: 'crm' }),
+  });
+  if (!response.ok) throw new Error('Abmeldung konnte nicht bestätigt werden.');
+  sessionStorage.removeItem(CURRENT_USER_KEY);
 }
 
 // Get current user
 export function getCurrentUser(): User | null {
-  const user = localStorage.getItem(CURRENT_USER_KEY);
+  const user = sessionStorage.getItem(CURRENT_USER_KEY);
   return user ? JSON.parse(user) : null;
 }
 
@@ -223,11 +231,48 @@ export function isLoggedIn(): boolean {
 // API Integration - Website CRM Scraper Backend
 // --------------------------------------------------------------------------
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://website-crm-scraper-backend-production.up.railway.app';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://website-crm-scraper-backend-production.up.railway.app';
+
+export function crmFetch(path: string, options: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(options.headers);
+  headers.set('Accept', 'application/json');
+  headers.set('X-Partsunion-App', 'crm');
+  if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  return fetch(`${API_BASE_URL}${path}`, { ...options, headers, credentials: 'include' });
+}
+
+function internalUser(raw: Record<string, unknown> | null | undefined): User {
+  return {
+    username: String(raw?.username || ''),
+    name: String(raw?.full_name || raw?.username || raw?.email || 'Partsunion'),
+    email: raw?.email ? String(raw.email) : undefined,
+    role: raw?.role === 'manager' ? 'Manager' : raw?.role === 'admin' || raw?.role === 'superadmin' ? 'Admin' : 'Vertrieb',
+    active: true,
+    createdAt: raw?.created_at ? String(raw.created_at) : undefined,
+  };
+}
+
+export async function restoreCrmSession(): Promise<User | null> {
+  try {
+    const response = await crmFetch('/api/admin-auth/session?app=crm');
+    if (!response.ok) throw new Error('Sitzungsstatus vorübergehend nicht verfügbar.');
+    const payload = await response.json();
+    if (!payload?.authenticated || !payload?.user) {
+      sessionStorage.removeItem(CURRENT_USER_KEY);
+      return null;
+    }
+    const user = internalUser(payload.user);
+    sessionStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+    return user;
+  } catch (error) {
+    sessionStorage.removeItem(CURRENT_USER_KEY);
+    throw error;
+  }
+}
 
 export async function getLeads(): Promise<Lead[]> {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/leads`);
+    const res = await crmFetch('/api/crm/leads');
     if (!res.ok) throw new Error('Failed to fetch leads');
     return await res.json();
   } catch (error) {
@@ -240,18 +285,18 @@ export async function saveLead(lead: Partial<Lead>): Promise<void> {
   try {
     if (lead.id) {
       // Update existing lead
-      await fetch(`${API_BASE_URL}/api/leads/${lead.id}`, {
+      const response = await crmFetch(`/api/crm/leads/${encodeURIComponent(lead.id)}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(lead)
       });
+      if (!response.ok) throw new Error((await response.json())?.error || 'Lead konnte nicht gespeichert werden.');
     } else {
       // Create new lead
-      await fetch(`${API_BASE_URL}/api/leads`, {
+      const response = await crmFetch('/api/crm/leads/internal', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(lead)
       });
+      if (!response.ok) throw new Error((await response.json())?.error || 'Lead konnte nicht erstellt werden.');
     }
   } catch (error) {
     console.error('Error saving lead:', error);
@@ -261,9 +306,10 @@ export async function saveLead(lead: Partial<Lead>): Promise<void> {
 
 export async function deleteLead(id: string): Promise<void> {
   try {
-    await fetch(`${API_BASE_URL}/api/leads/${id}`, {
+    const response = await crmFetch(`/api/crm/leads/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
+    if (!response.ok) throw new Error('Lead konnte nicht archiviert werden.');
   } catch (error) {
     console.error('Error deleting lead:', error);
     throw error;
@@ -273,9 +319,8 @@ export async function deleteLead(id: string): Promise<void> {
 // Scraper API Functions
 export async function evaluateWebsite(url: string, niche?: string, companyName?: string, city?: string): Promise<unknown> {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/scraper/evaluate`, {
+    const res = await crmFetch('/api/scraper/evaluate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url, niche, companyName, city })
     });
     if (!res.ok) throw new Error('Failed to evaluate website');
@@ -288,9 +333,8 @@ export async function evaluateWebsite(url: string, niche?: string, companyName?:
 
 export async function startScraping(websites: string[], niche: string, location?: string): Promise<{ jobId: string }> {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/scraper/start`, {
+    const res = await crmFetch('/api/scraper/start', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ websites, niche, location })
     });
     if (!res.ok) throw new Error('Failed to start scraping');
@@ -303,7 +347,7 @@ export async function startScraping(websites: string[], niche: string, location?
 
 export async function getScrapingStatus(jobId: string): Promise<{ status: string; processed: number; total: number }> {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/scraper/status/${jobId}`);
+    const res = await crmFetch(`/api/scraper/status/${encodeURIComponent(jobId)}`);
     if (!res.ok) throw new Error('Failed to get scraping status');
     return await res.json();
   } catch (error) {
@@ -320,9 +364,8 @@ export async function startRadiusSearch(
   scoreThreshold: number = 60
 ): Promise<{ jobId: string; message: string }> {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/scraper/radius-search`, {
+    const res = await crmFetch('/api/scraper/radius-search', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ location, radiusKm, niche, scoreThreshold })
     });
     if (!res.ok) {
