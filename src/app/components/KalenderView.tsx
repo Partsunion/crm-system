@@ -366,6 +366,7 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
             ) : selectedList.map((a) => {
               const tm = TYPE_META[a.type] || TYPE_META.other;
               const sm = STATUS_META[a.status] || STATUS_META.proposed;
+              const meetingHref = safeWebsiteUrl(a.meeting_link || undefined);
               return (
                 <div
                   key={a.id}
@@ -420,6 +421,17 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
                         className="inline-flex items-center gap-1 text-accent-500 hover:text-accent-500"
                       >
                         <Phone className="size-3" />{a.customer_phone}
+                      </a>
+                    )}
+                    {meetingHref && a.status !== 'cancelled' && a.teams_meeting?.state !== 'failed' && (
+                      <a
+                        href={meetingHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1 rounded bg-accent-600 px-2 py-1 font-medium text-white hover:bg-accent-700"
+                      >
+                        <ExternalLink className="size-3" /> Teams beitreten
                       </a>
                     )}
                   </div>
