@@ -406,10 +406,15 @@ function onAuthExpired(): void {
 }
 
 export async function validateSession(): Promise<User | null> {
-  const res = await fetch(`${API_BASE_URL}/api/admin-auth/me?app=crm`, { credentials: 'include', headers: authHeaders() });
+  // Der erste Seitenaufruf ist sehr oft ein regulaer abgemeldeter Zustand.
+  // Der stille Session-Endpunkt bildet ihn mit HTTP 200 ab, statt die
+  // Browser-Konsole bei jedem Besuch mit erwarteten 401-Antworten zu fuellen.
+  // Geschuetzte Fach-Endpunkte behalten weiterhin ihre strikten 401/403.
+  const res = await fetch(`${API_BASE_URL}/api/admin-auth/session?app=crm`, { credentials: 'include', headers: authHeaders() });
   if (res.status === 401 || res.status === 403) { clearSession(); return null; }
   await assertResponse(res, 'Sitzung konnte nicht geprüft werden.');
   const data = await res.json();
+  if (!data.authenticated || !data.user) { clearSession(); return null; }
   const raw = data.user || data;
   if (!raw.username || raw.app_access?.crm === false) { clearSession(); return null; }
   const user: User = { id: raw.id, username: raw.username, name: raw.full_name || raw.username, email: raw.email,

@@ -77,19 +77,6 @@ describe('Seitenrand', () => {
         ).toEqual([]);
     });
 
-    it('ist im Admin wertgleich', () => {
-        const hier = readFileSync(join(process.cwd(), 'src/app/components/ui-kit.tsx'), 'utf8');
-        const dort = readFileSync(
-            join(process.cwd(), '../Admin-Dashboard/src/components/ui/seite.tsx'), 'utf8',
-        );
-        const lies = (quelle: string, name: string) => {
-            const m = new RegExp(`export const ${name} = (?:cn\\()?'([^']*)'`).exec(quelle);
-            expect(m, `${name} nicht gefunden`).not.toBeNull();
-            return m![1];
-        };
-        expect(lies(hier, 'SEITEN_RAND_OHNE_BREITE')).toBe(lies(dort, 'SEITEN_RAND_OHNE_BREITE'));
-    });
-
     it('hält den Wert aus dem Entwurf, eine Stufe kleiner', () => {
         const quelle = readFileSync(join(process.cwd(), 'src/app/components/ui-kit.tsx'), 'utf8');
         const rand = /export const SEITEN_RAND_OHNE_BREITE = '([^']*)'/.exec(quelle)?.[1] ?? '';

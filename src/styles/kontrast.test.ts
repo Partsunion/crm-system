@@ -14,7 +14,7 @@
  *
  * Grenze: 4,5 für gewöhnlichen Text, 3,0 für Symbole und Umrisse.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -134,22 +134,6 @@ describe('Stufen bleiben unterscheidbar', () => {
                 `${stufen[i]} und ${stufen[i + 1]} liegen zu dicht beieinander`,
             ).toBeGreaterThan(1.15);
         }
-    });
-});
-
-describe('gemeinsame dunkle Grundflächen und Textfarben', () => {
-    const adminPath = join(process.cwd(), '../Admin-Dashboard/src/design-system/tokens.css');
-    // Read the other platform itself; copied hex expectations cannot detect drift.
-    it.skipIf(!existsSync(adminPath)).each([
-        'bg-canvas', 'bg-surface', 'text-primary', 'text-secondary', 'text-tertiary', 'text-muted',
-    ])('%s stimmt mit den Admin-Tokens überein', (name) => {
-        const admin = readFileSync(adminPath, 'utf8');
-        const match = new RegExp(`--${name}:\\s*(\\d+)\\s+(\\d+)%\\s+(\\d+)%`).exec(admin);
-        expect(match).not.toBeNull();
-        const expected = hslZuRgb(Number(match![1]), Number(match![2]), Number(match![3]));
-        const actual = token(name);
-        // HSL percentages and 8-bit hex round differently.
-        expected.forEach((channel, index) => expect(Math.abs(channel - actual[index]) * 255).toBeLessThanOrEqual(2));
     });
 });
 

@@ -11,7 +11,7 @@ const base=import.meta.env.VITE_API_BASE_URL||'https://api.partsunion.de';
 async function request<T>(path:string,input?:unknown,signal?:AbortSignal):Promise<T>{
  const token=getToken();
  const response=await fetch(base+'/api/crm/reports'+path,{
-  credentials:'include',method:input?'PUT':'GET',signal,
+  credentials: 'include',method:input?'PUT':'GET',signal,
   headers:{'Content-Type':'application/json','X-Partsunion-App':'crm',...(token?{Authorization:`Bearer ${token}`}:{})},
   ...(input?{body:JSON.stringify(input)}:{}),
  });

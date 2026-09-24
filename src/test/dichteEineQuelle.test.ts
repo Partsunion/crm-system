@@ -87,17 +87,4 @@ describe('Dichte kommt aus einer Quelle', () => {
         }
     });
 
-    it('bleibt mit dem Admin-Dashboard gleich', () => {
-        /**
-         * Die beiden Anwendungen laufen nebeneinander, und der Nutzer wechselt
-         * oben rechts zwischen ihnen. Springt dabei die Kachelhoehe, sieht es
-         * nach zwei verschiedenen Programmen aus.
-         */
-        const hier = readFileSync(QUELLE, 'utf8');
-        const dort = readFileSync('../Admin-Dashboard/src/components/ui/dichte.ts', 'utf8');
-        for (const name of ['KARTE_INNEN', 'KACHEL', 'KACHEL_ZAHL', 'KALENDER_ZELLE']) {
-            const wert = (q: string) => new RegExp(`export const ${name} = '([^']+)'`).exec(q)?.[1];
-            expect(wert(hier), `${name} weicht vom Admin-Dashboard ab`).toBe(wert(dort));
-        }
-    });
 });

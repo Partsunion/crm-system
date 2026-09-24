@@ -31,9 +31,16 @@ describe('CRM account boundary', () => {
   });
   it('validates cookie session and clears cached identity when revoked', async () => {
     sessionStorage.setItem('haendler_crm_current_user', JSON.stringify({ username: 'stale' }));
-    request.mockResolvedValue(response({}, 401));
+    request.mockResolvedValue(response({ authenticated: false, user: null }));
     expect(await validateSession()).toBeNull(); expect(getCurrentUser()).toBeNull();
-    expect(request.mock.calls[0][0]).toContain('/me?app=crm');
+    expect(request.mock.calls[0][0]).toContain('/session?app=crm');
+  });
+  it('restores a matching CRM cookie through the quiet session probe', async () => {
+    request.mockResolvedValue(response({ authenticated: true, user: {
+      id: 'sales-1', username: 'aaron', full_name: 'Aaron Vertrieb', role: 'sales', app_access: { admin: false, crm: true },
+    } }));
+    expect(await validateSession()).toMatchObject({ id: 'sales-1', username: 'aaron', name: 'Aaron Vertrieb', role: 'sales' });
+    expect(request.mock.calls[0][0]).toContain('/session?app=crm');
   });
   it('revokes the server session on logout even without a bearer token', async () => {
     request.mockResolvedValue(response({ ok: true }));
