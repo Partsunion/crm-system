@@ -17,6 +17,11 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.30.4-alpine3.24@sha256:adf5042a17f4ecdd200c595fa9ffd1be37efb18f89a830bd1a00e4ab4d59d42c
 
+# Keep the digest-pinned trust anchor while applying Alpine security fixes
+# published after that base image was assembled.
+USER root
+RUN apk upgrade --no-cache
+
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 ARG APP_RELEASE=crm-system@unversioned
