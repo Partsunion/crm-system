@@ -4,52 +4,32 @@ import { LeadsView } from './components/LeadsView';
 import { PipelineView } from './components/PipelineView';
 import { Settings } from './components/Settings';
 import { Login } from './components/Login';
+import { UserManagement } from './components/UserManagement';
 import { PipelineSettings } from './components/PipelineSettings';
 
 import { OutreachView } from './components/OutreachView';
-import { LayoutDashboard, Users, Workflow, Settings as SettingsIcon, Sparkles, Menu, X, LogOut, Layers, Mail } from 'lucide-react';
-import { logout, getCurrentUser, restoreCrmSession, loadCrmSettings } from './utils/storage';
+import { LayoutDashboard, Users, Workflow, Settings as SettingsIcon, Sparkles, Menu, X, LogOut, UserCog, Layers, Mail } from 'lucide-react';
+import { isLoggedIn, logout, getCurrentUser } from './utils/storage';
 
 export default function App() {
-  const [activeView, setActiveView] = useState<'dashboard' | 'leads' | 'pipeline' | 'outreach' | 'settings' | 'pipelineSettings'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'leads' | 'pipeline' | 'outreach' | 'settings' | 'users' | 'pipelineSettings'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
+  const [loggedIn, setLoggedIn] = useState(isLoggedIn());
   const currentUser = getCurrentUser();
 
-  useEffect(() => {
-    let active = true;
-    void restoreCrmSession().then(async (user) => {
-      if (user) await loadCrmSettings();
-      if (active) setLoggedIn(Boolean(user));
-    }).finally(() => {
-      if (active) setCheckingSession(false);
-    });
-    return () => { active = false; };
-  }, []);
-
-  const handleNavigate = (view: 'dashboard' | 'leads' | 'pipeline' | 'outreach' | 'settings' | 'pipelineSettings') => {
+  const handleNavigate = (view: 'dashboard' | 'leads' | 'pipeline' | 'outreach' | 'settings' | 'users' | 'pipelineSettings') => {
     setActiveView(view);
     setIsMobileMenuOpen(false);
   };
 
-  const handleLogout = async () => {
-    try { await logout(); } finally { setLoggedIn(false); }
+  const handleLogout = () => {
+    logout();
+    setLoggedIn(false);
   };
 
-  if (checkingSession) {
-    return <div className="min-h-screen bg-gradient-to-br from-[#7c3aed] to-[#a78bfa] flex items-center justify-center text-white font-semibold">Sitzung wird geprüft …</div>;
-  }
-
   if (!loggedIn) {
-    return <Login onLogin={() => {
-      void loadCrmSettings()
-        .catch((error) => {
-          console.error('CRM-Einstellungen konnten nach dem Login nicht geladen werden:', error);
-        })
-        .finally(() => setLoggedIn(true));
-    }} />;
+    return <Login onLogin={() => setLoggedIn(true)} />;
   }
 
   return (
@@ -92,7 +72,7 @@ export default function App() {
                 </div>
               </div>
               <button
-                onClick={() => void handleLogout()}
+                onClick={handleLogout}
                 className="flex items-center gap-2 px-4 py-2.5 text-gray-600 hover:text-gray-900 hover:bg-gradient-to-r hover:from-red-50 hover:to-transparent rounded-xl transition-all border border-transparent hover:border-red-100"
                 title="Abmelden"
               >
@@ -193,6 +173,17 @@ export default function App() {
               {isSidebarExpanded && <span className="whitespace-nowrap">Einstellungen</span>}
             </button>
             <button
+              onClick={() => handleNavigate('users')}
+              className={`w-full flex items-center ${isSidebarExpanded ? 'gap-3' : 'justify-center'} px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'users'
+                ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
+                : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
+                }`}
+              title={!isSidebarExpanded ? 'Benutzerverwaltung' : ''}
+            >
+              <UserCog className="w-5 h-5 flex-shrink-0" />
+              {isSidebarExpanded && <span className="whitespace-nowrap">Benutzerverwaltung</span>}
+            </button>
+            <button
               onClick={() => handleNavigate('pipelineSettings')}
               className={`w-full flex items-center ${isSidebarExpanded ? 'gap-3' : 'justify-center'} px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'pipelineSettings'
                 ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
@@ -269,6 +260,16 @@ export default function App() {
                 <span>Einstellungen</span>
               </button>
               <button
+                onClick={() => handleNavigate('users')}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'users'
+                  ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
+                  : 'text-gray-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-transparent hover:border-purple-100'
+                  }`}
+              >
+                <UserCog className="w-5 h-5" />
+                <span>Benutzerverwaltung</span>
+              </button>
+              <button
                 onClick={() => handleNavigate('pipelineSettings')}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${activeView === 'pipelineSettings'
                   ? 'bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white shadow-lg shadow-purple-500/30'
@@ -290,6 +291,7 @@ export default function App() {
 
           {activeView === 'outreach' && <OutreachView />}
           {activeView === 'settings' && <Settings />}
+          {activeView === 'users' && <UserManagement />}
           {activeView === 'pipelineSettings' && <PipelineSettings />}
         </main>
       </div>

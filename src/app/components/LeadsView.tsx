@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Plus, Search, Filter, MoreVertical, Edit, Trash2, Eye, Download, Mail, Phone, Upload, ArrowUpDown, ArrowUp, ArrowDown, User, Clock, Calendar, Globe, ExternalLink, Star } from 'lucide-react';
-import { getLeads, saveLead, deleteLead, type Lead } from '../utils/storage';
+import { getLeads, saveLead, deleteLead, getUsers, type Lead } from '../utils/storage';
 import { LeadModal } from './LeadModal';
 import { LeadDetailModal } from './LeadDetailModal';
 import { ImportModal } from './ImportModal';
@@ -69,6 +69,7 @@ export function LeadsView() {
   };
 
   // Get unique users for filter
+  const users = getUsers();
   const assignedUsers = ['Alle Benutzer', ...Array.from(new Set(leads.map(l => l.assignedTo).filter(Boolean)))];
 
   const filteredLeads = leads

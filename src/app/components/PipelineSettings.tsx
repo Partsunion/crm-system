@@ -19,7 +19,6 @@ export function PipelineSettings() {
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingStage, setEditingStage] = useState<PipelineStage | null>(null);
-  const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     color: 'blue',
@@ -57,20 +56,7 @@ export function PipelineSettings() {
     setIsModalOpen(true);
   };
 
-  const persistStages = async (updatedStages: PipelineStage[]) => {
-    setSaving(true);
-    try {
-      await saveSettings({ ...getSettings(), pipelineStages: updatedStages });
-      setStages(updatedStages.slice().sort((a, b) => a.order - b.order));
-    } catch (error) {
-      alert(error instanceof Error ? error.message : 'Pipeline konnte nicht gespeichert werden.');
-      throw error;
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!formData.name.trim()) {
       alert('Bitte geben Sie einen Namen ein');
       return;
@@ -78,14 +64,14 @@ export function PipelineSettings() {
 
     const settings = getSettings();
     
-    let updatedStages: PipelineStage[];
     if (editingStage) {
       // Update existing stage
-      updatedStages = settings.pipelineStages.map(s =>
+      const updatedStages = settings.pipelineStages.map(s => 
         s.id === editingStage.id 
           ? { ...s, ...formData }
           : s
       );
+      saveSettings({ ...settings, pipelineStages: updatedStages });
     } else {
       // Create new stage
       const newStage: PipelineStage = {
@@ -96,33 +82,35 @@ export function PipelineSettings() {
         order: settings.pipelineStages.length + 1,
         isActive: formData.isActive,
       };
-      updatedStages = [...settings.pipelineStages, newStage];
+      saveSettings({ 
+        ...settings, 
+        pipelineStages: [...settings.pipelineStages, newStage] 
+      });
     }
-    try {
-      await persistStages(updatedStages);
-      setIsModalOpen(false);
-    } catch {
-      // Der Dialog bleibt offen, damit die Eingabe nicht verloren geht.
-    }
+
+    loadStages();
+    setIsModalOpen(false);
   };
 
-  const handleDelete = async (stageId: string) => {
+  const handleDelete = (stageId: string) => {
     if (confirm('Möchten Sie diese Pipeline-Stage wirklich löschen?')) {
       const settings = getSettings();
       const filteredStages = settings.pipelineStages.filter(s => s.id !== stageId);
-      try { await persistStages(filteredStages); } catch { /* Zustand bleibt unverändert. */ }
+      saveSettings({ ...settings, pipelineStages: filteredStages });
+      loadStages();
     }
   };
 
-  const handleToggleActive = async (stageId: string) => {
+  const handleToggleActive = (stageId: string) => {
     const settings = getSettings();
     const updatedStages = settings.pipelineStages.map(s => 
       s.id === stageId ? { ...s, isActive: !s.isActive } : s
     );
-    try { await persistStages(updatedStages); } catch { /* Zustand bleibt unverändert. */ }
+    saveSettings({ ...settings, pipelineStages: updatedStages });
+    loadStages();
   };
 
-  const moveStage = async (index: number, direction: 'up' | 'down') => {
+  const moveStage = (index: number, direction: 'up' | 'down') => {
     const newStages = [...stages];
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
     
@@ -136,7 +124,9 @@ export function PipelineSettings() {
       order: idx + 1,
     }));
     
-    try { await persistStages(updatedStages); } catch { /* Zustand bleibt unverändert. */ }
+    const settings = getSettings();
+    saveSettings({ ...settings, pipelineStages: updatedStages });
+    loadStages();
   };
 
   const getColorStyles = (colorName: string) => {
@@ -194,15 +184,15 @@ export function PipelineSettings() {
                 {/* Drag Handle */}
                 <div className="flex flex-col gap-1">
                   <button
-                    onClick={() => void moveStage(index, 'up')}
-                    disabled={saving || index === 0}
+                    onClick={() => moveStage(index, 'up')}
+                    disabled={index === 0}
                     className="p-1 hover:bg-gray-200 rounded disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     <GripVertical className="w-4 h-4 text-gray-400 rotate-90" />
                   </button>
                   <button
-                    onClick={() => void moveStage(index, 'down')}
-                    disabled={saving || index === stages.length - 1}
+                    onClick={() => moveStage(index, 'down')}
+                    disabled={index === stages.length - 1}
                     className="p-1 hover:bg-gray-200 rounded disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     <GripVertical className="w-4 h-4 text-gray-400 -rotate-90" />
@@ -239,8 +229,7 @@ export function PipelineSettings() {
                 {/* Actions */}
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => void handleToggleActive(stage.id)}
-                    disabled={saving}
+                    onClick={() => handleToggleActive(stage.id)}
                     className={`p-2 rounded-lg transition-colors ${
                       stage.isActive 
                         ? 'hover:bg-gray-100' 
@@ -262,8 +251,7 @@ export function PipelineSettings() {
                     <Edit className="w-4 h-4 text-gray-600" />
                   </button>
                   <button
-                    onClick={() => void handleDelete(stage.id)}
-                    disabled={saving}
+                    onClick={() => handleDelete(stage.id)}
                     className="p-2 hover:bg-red-50 rounded-lg transition-colors"
                     title="Löschen"
                   >
@@ -374,8 +362,7 @@ export function PipelineSettings() {
                     Abbrechen
                   </button>
                   <button
-                    onClick={() => void handleSave()}
-                    disabled={saving}
+                    onClick={handleSave}
                     className="px-4 py-2 bg-[#7c3aed] text-white rounded-lg hover:bg-[#6d28d9] transition-colors font-medium"
                   >
                     {editingStage ? 'Speichern' : 'Stage erstellen'}

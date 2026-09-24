@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { X, Mail, Phone, Building, User, Calendar, Edit, Trash2, Globe, MapPin, Tag as TagIcon, Plus, MessageSquare, PhoneCall, Video, FileText, CheckCircle, Clock, FlaskConical } from 'lucide-react';
-import { type Lead, type Activity, type DemoRequest, getActivities, saveActivity, deleteActivity, getDemoRequests, requestDemo } from '../utils/storage';
+import { X, Mail, Phone, Building, User, Calendar, Edit, Trash2, Globe, MapPin, Tag as TagIcon, Plus, MessageSquare, PhoneCall, Video, FileText, CheckCircle, Clock } from 'lucide-react';
+import { type Lead, type Activity, getActivities, saveActivity, deleteActivity } from '../utils/storage';
 
 interface LeadDetailModalProps {
   lead: Lead;
@@ -13,11 +13,6 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete }: LeadDetailM
   const [activeTab, setActiveTab] = useState<'details' | 'activities'>('details');
   const [activities, setActivities] = useState<Activity[]>([]);
   const [showActivityForm, setShowActivityForm] = useState(false);
-  const [demoRequest, setDemoRequest] = useState<DemoRequest | null>(null);
-  const [demoNote, setDemoNote] = useState('');
-  const [demoFollowUp, setDemoFollowUp] = useState(new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10));
-  const [demoBusy, setDemoBusy] = useState(false);
-  const [demoError, setDemoError] = useState('');
   const [newActivity, setNewActivity] = useState({
     type: 'note' as Activity['type'],
     title: '',
@@ -34,47 +29,20 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete }: LeadDetailM
   }, []);
 
   useEffect(() => {
-    void loadActivities();
-    let active = true;
-    void getDemoRequests()
-      .then((requests) => { if (active) setDemoRequest(requests.find((item) => item.crm_lead_id === lead.id) ?? null); })
-      .catch((error: unknown) => { if (active) setDemoError(error instanceof Error ? error.message : 'Demo-Status nicht erreichbar.'); });
-    return () => { active = false; };
+    loadActivities();
   }, [lead.id]);
 
-  const handleDemoRequest = async () => {
-    setDemoBusy(true);
-    setDemoError('');
-    try {
-      const created = await requestDemo({
-        leadId: lead.id,
-        contactName: lead.contactPerson,
-        email: lead.email || undefined,
-        phone: lead.phone,
-        followUpAt: `${demoFollowUp}T12:00:00.000Z`,
-        notes: demoNote,
-      });
-      setDemoRequest(created);
-      setDemoNote('');
-    } catch (error) {
-      setDemoError(error instanceof Error ? error.message : 'Demo-Anfrage konnte nicht übergeben werden.');
-    } finally {
-      setDemoBusy(false);
-    }
+  const loadActivities = () => {
+    setActivities(getActivities(lead.id));
   };
 
-  const loadActivities = async () => {
-    try { setActivities(await getActivities(lead.id)); }
-    catch { setActivities([]); }
-  };
-
-  const handleSaveActivity = async () => {
+  const handleSaveActivity = () => {
     if (newActivity.title) {
-      await saveActivity({
+      saveActivity({
         ...newActivity,
         leadId: lead.id,
       });
-      await loadActivities();
+      loadActivities();
       setNewActivity({
         type: 'note',
         title: '',
@@ -85,18 +53,18 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete }: LeadDetailM
     }
   };
 
-  const handleToggleActivity = async (activity: Activity) => {
-    await saveActivity({
+  const handleToggleActivity = (activity: Activity) => {
+    saveActivity({
       ...activity,
       completed: !activity.completed,
     });
-    await loadActivities();
+    loadActivities();
   };
 
-  const handleDeleteActivity = async (id: string) => {
+  const handleDeleteActivity = (id: string) => {
     if (confirm('Aktivität wirklich löschen?')) {
-      await deleteActivity(lead.id, id);
-      await loadActivities();
+      deleteActivity(id);
+      loadActivities();
     }
   };
 
@@ -243,33 +211,6 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete }: LeadDetailM
                       </p>
                     </div>
                   )}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border-2 border-red-100 bg-red-50/60 p-5 md:p-6">
-                <div className="flex items-start gap-3">
-                  <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-red-600 text-white"><FlaskConical className="h-5 w-5" /></div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div><h4 className="font-bold text-gray-900">Partsunion-Demo</h4><p className="text-sm text-gray-600">Übergabe an Partsunion Intern · fest 50 VIN-Abfragen</p></div>
-                      {demoRequest ? <span className="rounded-full border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-700">{demoRequest.status.replaceAll('_', ' ')}</span> : null}
-                    </div>
-                    {demoRequest ? (
-                      <div className="mt-4 grid gap-2 text-sm sm:grid-cols-3">
-                        <div><p className="text-xs text-gray-500">Angefragt</p><p className="font-semibold">{new Date(demoRequest.requested_at).toLocaleDateString('de-DE')}</p></div>
-                        <div><p className="text-xs text-gray-500">Zugang versendet</p><p className="font-semibold">{demoRequest.access_sent_at ? new Date(demoRequest.access_sent_at).toLocaleDateString('de-DE') : 'Noch offen'}</p></div>
-                        <div><p className="text-xs text-gray-500">Kontingent</p><p className="font-semibold">{demoRequest.vin_allowance} VIN</p></div>
-                      </div>
-                    ) : (
-                      <div className="mt-4 grid gap-3 md:grid-cols-[170px_minmax(0,1fr)_auto]">
-                        <label className="text-xs font-semibold text-gray-600">Nachfassen<input type="date" value={demoFollowUp} onChange={(event) => setDemoFollowUp(event.target.value)} className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900" /></label>
-                        <label className="text-xs font-semibold text-gray-600">Übergabenotiz<input value={demoNote} onChange={(event) => setDemoNote(event.target.value)} placeholder="Was soll Intern beachten?" className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900" /></label>
-                        <button type="button" disabled={demoBusy || !lead.email} onClick={() => void handleDemoRequest()} className="self-end rounded-xl bg-red-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50">{demoBusy ? 'Übergabe …' : 'Demo anfordern'}</button>
-                      </div>
-                    )}
-                    {demoError ? <p className="mt-3 text-xs font-medium text-red-700">{demoError}</p> : null}
-                    {!lead.email && !demoRequest ? <p className="mt-2 text-xs text-red-700">Vor der Demo-Anfrage muss eine Empfänger-E-Mail im Lead hinterlegt sein.</p> : null}
-                  </div>
                 </div>
               </div>
 
@@ -478,7 +419,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete }: LeadDetailM
                       Abbrechen
                     </button>
                     <button
-                      onClick={() => void handleSaveActivity()}
+                      onClick={handleSaveActivity}
                       className="flex-1 px-4 py-2.5 bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] text-white rounded-xl hover:shadow-lg transition-all font-medium"
                     >
                       Speichern
@@ -504,7 +445,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete }: LeadDetailM
                           <div className="flex items-center gap-2">
                             {activity.type === 'task' && (
                               <button
-                                onClick={() => void handleToggleActivity(activity)}
+                                onClick={() => handleToggleActivity(activity)}
                                 className={`p-1.5 rounded-lg transition-colors ${activity.completed
                                     ? 'bg-green-100 text-green-600'
                                     : 'bg-gray-100 text-gray-400 hover:bg-green-50 hover:text-green-600'
@@ -514,7 +455,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete }: LeadDetailM
                               </button>
                             )}
                             <button
-                              onClick={() => void handleDeleteActivity(activity.id)}
+                              onClick={() => handleDeleteActivity(activity.id)}
                               className="p-1.5 hover:bg-red-50 text-red-500 rounded-lg transition-colors"
                             >
                               <Trash2 className="w-4 h-4" />
