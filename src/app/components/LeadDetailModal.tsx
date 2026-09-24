@@ -559,7 +559,7 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
             {appointmentError && <LoadError message="Geplante Anrufe konnten nicht geladen werden." onRetry={() => void reloadAppts()} />}
             <div className="mb-2 flex items-center justify-between">
               <span className="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted">
-                <CalendarClock className="size-3.5" />Geplante Anrufe
+                <CalendarClock className="size-3.5" />Geplante Termine
               </span>
               <button
                 type="button"
@@ -603,6 +603,8 @@ export function LeadDetailModal({ lead, onClose, onEdit, onDelete, onLeadChanged
                           {a.assignee_name ? ` · ${a.assignee_name}` : ''}
                           {a.notes ? ` · ${a.notes}` : ''}
                         </p>
+                        {a.customer_email && <p className="mt-1 flex flex-wrap gap-1 text-[10px]"><span className={cn('rounded px-1.5 py-0.5', a.invite_delivery_status === 'delivered' ? 'bg-status-success/15 text-status-success' : ['bounced','failed','suppressed','complained','uncertain'].includes(a.invite_delivery_status || '') ? 'bg-status-danger/15 text-status-danger' : 'bg-elevated text-text-muted')}>{a.invite_delivery_status === 'delivered' ? 'Einladung zugestellt' : a.invite_sent_at ? 'Einladung versendet' : 'Einladung offen'}</span><span className={cn('rounded px-1.5 py-0.5', a.attendance_status === 'confirmed' ? 'bg-status-success/15 text-status-success' : a.attendance_status === 'declined' ? 'bg-status-danger/15 text-status-danger' : 'bg-status-warning/15 text-status-warning')}>{a.attendance_status === 'confirmed' ? 'Lead bestätigt' : a.attendance_status === 'declined' ? 'Lead abgesagt' : 'Bestätigung offen'}</span></p>}
+                        {safeWebsiteUrl(a.meeting_link || undefined) && <a href={safeWebsiteUrl(a.meeting_link || undefined)!} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-accent-500 hover:underline"><Video className="size-3" />Teams beitreten</a>}
                       </div>
                       <IconButton className="size-7" onClick={() => completeAppt(a)} aria-label="Als erledigt markieren" title="Erledigt">
                         <CheckCircle className="size-3.5" />

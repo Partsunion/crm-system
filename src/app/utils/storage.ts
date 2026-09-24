@@ -1096,6 +1096,17 @@ export interface Appointment {
   status: string;
   public_token: string | null;
   invite_sent_at: string | null;
+  invite_delivery_status?: 'pending' | 'sending' | 'accepted' | 'delivered' | 'delayed' | 'bounced' | 'failed' | 'suppressed' | 'complained' | 'uncertain' | null;
+  invite_delivered_at?: string | null;
+  invite_delivery_error?: string | null;
+  attendance_status?: 'pending' | 'confirmed' | 'declined' | null;
+  attendance_responded_at?: string | null;
+  reminder_scheduled_at?: string | null;
+  reminder_status?: 'pending' | 'processing' | 'sent' | 'failed' | 'uncertain' | 'cancelled' | 'not_applicable' | 'dead_letter';
+  reminder_sent_at?: string | null;
+  reminder_delivery_status?: string | null;
+  reminder_delivered_at?: string | null;
+  reminder_error?: string | null;
   responded_at: string | null;
   created_at: string;
   updated_at: string;

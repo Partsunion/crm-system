@@ -179,11 +179,18 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
     if (Object.keys(errors).length) { toast.error('Bitte die markierten Termindaten prüfen.'); requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-appointment-form] [aria-invalid="true"]')?.focus()); return; }
     if (review.loading || review.error) { toast.error('Die Verfügbarkeit konnte noch nicht geprüft werden. Bitte erneut versuchen.'); return; }
     if (review.conflicts.length && !review.confirmed) { toast.error('Bitte die Terminüberschneidung prüfen und bestätigen.'); return; }
+    const selectedAdmin = admins.find((admin) => admin.id === form.assigneeId);
+    const existingMeetingLink = form.meetingLink?.trim() ? safeWebsiteUrl(form.meetingLink) : '';
+    if (form.sendInvite && !selectedAdmin?.teamsAvailable && !existingMeetingLink && !form.managedTeams) {
+      toast.error('Für Kundeneinladungen bitte eine Person mit Teams-Kalender wählen oder einen gültigen Meeting-Link eintragen.');
+      return;
+    }
     const payload: AppointmentInput = {
       type: form.type, title: form.title?.trim() || undefined, notes: form.notes, assigneeId: form.assigneeId || '', companyId: form.companyId,
       customerName: form.customerName?.trim(), customerEmail: form.customerEmail?.trim(), customerPhone: form.customerPhone?.trim(),
-      durationMinutes: form.durationMinutes, location: form.location?.trim(), meetingLink: form.meetingLink?.trim() ? safeWebsiteUrl(form.meetingLink) : '',
-      start: `${form.date}T${form.time}`, sendInvite: form.sendInvite, createTeams: form.createTeams,
+      durationMinutes: form.durationMinutes, location: form.location?.trim(), meetingLink: existingMeetingLink,
+      start: `${form.date}T${form.time}`, sendInvite: form.sendInvite,
+      createTeams: !form.managedTeams && Boolean(form.sendInvite && selectedAdmin?.teamsAvailable) || form.createTeams,
     };
     saveLock.current = true; setSaving(true);
     try {
@@ -498,7 +505,7 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
               <Field label="Meeting-Link"><input disabled={form.createTeams || form.managedTeams} value={form.meetingLink || ''} aria-invalid={Boolean(formErrors.meetingLink)} placeholder={form.createTeams ? 'Wird beim Speichern erstellt' : 'https://meet…'} onChange={(e) => changeForm((f) => ({ ...f, meetingLink: e.target.value }))} className={inputSized} />{formErrors.meetingLink && <p role="alert" className="mt-1 text-xs text-status-danger">{formErrors.meetingLink}</p>}</Field>
             </div>
             {form.managedTeams ? <p className="text-xs text-text-secondary">Mit Teams verbunden. Änderungen an Zeit und Titel werden im Kalender des Organisators übernommen.</p> : admins.find(a => a.id === form.assigneeId)?.teamsAvailable ? <label className="flex items-start gap-2 text-sm text-text-secondary">
-              <input type="checkbox" checked={!!form.createTeams} onChange={e => changeForm(f => ({ ...f, createTeams: e.target.checked, ...(e.target.checked ? { meetingLink: '' } : {}) }))} className="mt-0.5 size-4 shrink-0 accent-accent-500" />
+              <input type="checkbox" checked={!!form.sendInvite || !!form.createTeams} disabled={!!form.sendInvite} onChange={e => changeForm(f => ({ ...f, createTeams: e.target.checked, ...(e.target.checked ? { meetingLink: '' } : {}) }))} className="mt-0.5 size-4 shrink-0 accent-accent-500" />
               <span>Teams-Besprechung automatisch erstellen<span className="mt-1 block text-xs text-text-muted">Im persönlichen Microsoft-Kalender. Der Kunde erhält den Beitrittslink in E-Mail und Kalenderanhang.</span></span>
             </label> : <p className="text-xs text-text-muted">Für diese zuständige Person ist kein Teams-Kalender verbunden. Ein vorhandener Meeting-Link kann oben eingefügt werden.</p>}
             <Field label="Interne Notizen">
@@ -509,7 +516,7 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
             <label className="flex items-center gap-2 rounded-md border border-border-subtle bg-canvas p-2.5 text-sm text-text-secondary">
               <input type="checkbox" checked={!!form.sendInvite} onChange={(e) => changeForm((f) => ({ ...f, sendInvite: e.target.checked }))} className="size-4 accent-accent-500" />
               <Mail className="size-4 text-text-muted" />
-              {editingId ? 'Neue Einladung per E-Mail senden' : 'Einladung per E-Mail an den Kunden senden'}
+              {editingId ? 'Neue Einladung mit Teams-Link sofort senden' : 'Einladung mit Teams-Link sofort an den Kunden senden'}
             </label>
           </div>
         </Modal>
@@ -559,7 +566,13 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
               {detail.customer_email && <Row icon={<Mail className="size-4" />} text={detail.customer_email} />}
               {detail.customer_phone && <Row icon={<Phone className="size-4" />} text={detail.customer_phone} />}
               {(detail.meeting_link || detail.location) && <Row icon={<MapPin className="size-4" />} text={detail.meeting_link || detail.location || ''} />}
+              {detail.customer_email && <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-3">
+                <CommunicationState label="Einladung" value={detail.invite_delivery_status === 'delivered' ? 'Zugestellt' : detail.invite_delivery_status === 'accepted' || detail.invite_sent_at ? 'Provider akzeptiert' : detail.invite_delivery_status ? 'Prüfen' : 'Nicht versendet'} tone={detail.invite_delivery_status === 'delivered' ? 'success' : ['bounced','failed','suppressed','complained','uncertain'].includes(detail.invite_delivery_status || '') ? 'danger' : 'pending'} />
+                <CommunicationState label="Lead-Antwort" value={detail.attendance_status === 'confirmed' ? 'Bestätigt' : detail.attendance_status === 'declined' ? 'Abgesagt' : 'Antwort offen'} tone={detail.attendance_status === 'confirmed' ? 'success' : detail.attendance_status === 'declined' ? 'danger' : 'pending'} />
+                <CommunicationState label="24h-Reminder" value={detail.reminder_delivery_status === 'delivered' ? 'Zugestellt' : detail.reminder_status === 'sent' ? 'Versendet' : ['failed','uncertain','dead_letter'].includes(detail.reminder_status || '') ? 'Prüfen' : detail.reminder_scheduled_at ? 'Geplant' : 'Nicht geplant'} tone={detail.reminder_delivery_status === 'delivered' ? 'success' : ['failed','uncertain','dead_letter'].includes(detail.reminder_status || '') ? 'danger' : 'pending'} />
+              </div>}
               {inviteError && <p role="alert" className="rounded-md bg-status-danger/10 p-3 text-sm text-status-danger">Termin gespeichert, Einladung nicht versendet: {inviteError} Über „Einladung senden“ kannst du es erneut versuchen.</p>}
+              {!inviteError && (detail.invite_delivery_error || detail.reminder_error) && <p role="alert" className="rounded-md bg-status-danger/10 p-3 text-sm text-status-danger">{detail.invite_delivery_error || detail.reminder_error}</p>}
               {!inviteError && detail.teams_meeting?.state === 'failed' && <p role="alert" className="rounded-md bg-status-danger/10 p-3 text-sm text-status-danger">Teams konnte nicht synchronisiert werden: {detail.teams_meeting.error} Bitte erneut synchronisieren oder einladen.</p>}
               {detail.invite_sent_at && <div className="text-xs text-text-muted">Zuletzt per E-Mail verschickt: {new Date(detail.invite_sent_at).toLocaleString('de-DE', { timeZone: 'Europe/Berlin' })}.</div>}
               {detail.notes && <div className="rounded-md border border-border-subtle bg-canvas p-2.5 text-sm text-text-muted">{detail.notes}</div>}
@@ -569,6 +582,10 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
       })()}
     </div>
   );
+}
+
+function CommunicationState({ label, value, tone }: { label: string; value: string; tone: 'success' | 'danger' | 'pending' }) {
+  return <div className="rounded-md border border-border-subtle bg-canvas p-2.5"><p className="text-[10px] font-medium uppercase tracking-wide text-text-muted">{label}</p><p className={cn('mt-1 text-xs font-semibold', tone === 'success' ? 'text-status-success' : tone === 'danger' ? 'text-status-danger' : 'text-text-secondary')}>{value}</p></div>;
 }
 
 function Row({ icon, text }: { icon: ReactNode; text: string }) {

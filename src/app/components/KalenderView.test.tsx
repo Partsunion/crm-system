@@ -54,6 +54,7 @@ describe('calendar appointment editor', () => {
   });
 
   it('prefills lead contact and owner, saves the lead association and protects internal notes', async () => {
+    api.admins.mockResolvedValue([{id:'sales-1',username:'anna',name:'Anna',teamsAvailable:true}]);
     render(<KalenderView lead={{ id: 'lead-1', company: 'Teile Müller', contactPerson: 'Frau Müller', email: 'kunde@example.de', phone: '02232 123', assignedTo: 'anna', status: 'Neu', source: 'Manuell', tags: [], createdAt: '', updatedAt: '', notes: 'Interne Verhandlung' }} />);
     await waitFor(() => expect(screen.getByRole('option', { name: 'Anna' })).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Termin für Lead planen' }));
@@ -65,10 +66,12 @@ describe('calendar appointment editor', () => {
   });
 
   it('retries a failed invitation on the saved appointment without creating a duplicate or reporting false success', async () => {
+    api.admins.mockResolvedValue([{id:'sales-1',username:'anna',name:'Anna',teamsAvailable:true}]);
     const appointment = { id: 'appt-1', type: 'sales', title: 'Einladung', start_at: '2026-09-09T10:00', end_at: '2026-09-09T10:30', duration_minutes: 30, status: 'proposed', customer_email: 'kunde@example.de' };
     api.create.mockResolvedValue({ appointment, inviteSent: false, inviteError: 'Versanddienst nicht erreichbar' });
     api.update.mockResolvedValueOnce({ appointment, inviteSent: false, inviteError: 'Versanddienst nicht erreichbar' }).mockResolvedValueOnce({ appointment: { ...appointment, invite_sent_at: '2026-09-08T01:00:00Z' }, inviteSent: true });
     render(<KalenderView />);
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Anna' })).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Neuer Termin' }));
     fireEvent.change(screen.getByLabelText('E-Mail (für die Einladung)'), { target: { value: 'kunde@example.de' } });
     fireEvent.click(screen.getByRole('button', { name: 'Anlegen' }));
