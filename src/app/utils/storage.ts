@@ -1074,7 +1074,7 @@ export type AppointmentType = 'quali' | 'sales' | 'call' | 'other';
 export type AppointmentStatus = 'proposed' | 'confirmed' | 'declined' | 'cancelled' | 'completed' | 'no_show';
 
 export interface Appointment {
-  teams_meeting?: { requested?: boolean; state?: 'pending' | 'ready' | 'failed' | 'cancelled'; error?: string };
+  teams_meeting?: { requested?: boolean; user?: string; organizer?: string; coOrganizers?: string[]; coOrganizerState?: 'pending' | 'ready' | 'failed'; coOrganizerError?: string; state?: 'pending' | 'ready' | 'failed' | 'cancelled'; error?: string };
   invitation_from?: string | null;
   id: string;
   type: string;

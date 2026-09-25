@@ -219,6 +219,21 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
     }
   }
 
+  async function syncTeamsRoles(appointment: Appointment) {
+    if (resendLock.current) return;
+    resendLock.current = true; setResending(true); setInviteError('');
+    try {
+      const result = await updateAppointment(appointment.id, { createTeams: true });
+      if (result.calendarError) throw new Error(result.calendarError);
+      setDetail(result.appointment);
+      toast.success('Teams-Veranstalter und Mitorganisatoren wurden synchronisiert.');
+      await load();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Teams-Rollen konnten nicht synchronisiert werden.';
+      setInviteError(message); toast.error(message);
+    } finally { resendLock.current = false; setResending(false); }
+  }
+
   async function setStatus(a: Appointment, status: AppointmentStatus) {
     try { await updateAppointment(a.id, { status }); toast.success(`Status: ${STATUS_META[status]?.label || status}`); setDetail(null); await load(); }
     catch { toast.error('Status konnte nicht gesetzt werden.'); }
@@ -551,6 +566,7 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
                 <Button size="sm" variant="outline" onClick={() => openEdit(detail)}><RotateCcw className="size-4" /> Verschieben</Button>
                 {detail.public_token && <Button size="sm" variant="outline" onClick={() => copyLink(detail)}><Link2 className="size-4" /> Link</Button>}
                 {detail.customer_email && detail.status !== 'cancelled' && <Button size="sm" variant="outline" disabled={resending} onClick={() => resend(detail)}>{resending ? <Loader2 className="size-4 animate-spin" /> : <Mail className="size-4" />} {resending ? 'Wird versendet …' : detail.invite_sent_at ? 'Erneut einladen' : 'Einladung senden'}</Button>}
+                {detail.teams_meeting?.requested && detail.status !== 'cancelled' && <Button size="sm" variant="outline" disabled={resending} onClick={() => syncTeamsRoles(detail)}>{resending ? <Loader2 className="size-4 animate-spin" /> : <User className="size-4" />} Mitorganisatoren synchronisieren</Button>}
                 {!detail.customer_email && detail.teams_meeting?.state === 'failed' && <Button size="sm" variant="outline" disabled={resending} onClick={() => resend(detail)}>Teams synchronisieren</Button>}
                 {detail.status !== 'completed' && detail.status !== 'cancelled' && <Button size="sm" variant="outline" onClick={() => setStatus(detail, 'completed')}><CheckCircle2 className="size-4" /> Erledigt</Button>}
                 {detail.status !== 'no_show' && detail.status !== 'cancelled' && <Button size="sm" variant="outline" onClick={() => setStatus(detail, 'no_show')}><Ban className="size-4" /> No-Show</Button>}
@@ -563,6 +579,8 @@ export function KalenderView({ onOpenLead, lead, onClearLead }: { onOpenLead?: (
             <div className="space-y-2 text-sm text-text-secondary">
               <Row icon={<Clock className="size-4" />} text={`${dayKeyOf(detail.start_at).split('-').reverse().join('.')} · ${timeOf(detail.start_at)}–${timeOf(detail.end_at)} (${detail.duration_minutes} Min.)`} />
               {detail.assignee_name && <Row icon={<User className="size-4" />} text={`Zuständig: ${detail.assignee_name}`} />}
+              {detail.teams_meeting?.organizer && <Row icon={<User className="size-4" />} text={`Hauptorganisator: ${detail.teams_meeting.organizer}`} />}
+              {detail.teams_meeting?.requested && <Row icon={<User className="size-4" />} text={`Mitorganisatoren: ${detail.teams_meeting.coOrganizerState === 'ready' ? detail.teams_meeting.coOrganizers?.join(', ') || 'keine weiteren verbundenen Admins' : 'noch nicht bestätigt'}`} />}
               {detail.customer_email && <Row icon={<Mail className="size-4" />} text={detail.customer_email} />}
               {detail.customer_phone && <Row icon={<Phone className="size-4" />} text={detail.customer_phone} />}
               {(detail.meeting_link || detail.location) && <Row icon={<MapPin className="size-4" />} text={detail.meeting_link || detail.location || ''} />}
